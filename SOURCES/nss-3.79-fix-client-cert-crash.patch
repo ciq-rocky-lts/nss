@@ -1,0 +1,23 @@
+diff --git a/lib/ssl/authcert.c b/lib/ssl/authcert.c
+--- a/lib/ssl/authcert.c
++++ b/lib/ssl/authcert.c
+@@ -201,16 +201,19 @@ NSS_GetClientAuthData(void *arg,
+ 
+     /* otherwise look through the cache based on usage
+      * if chosenNickname is set, we ignore the expiration date */
+     if (certList == NULL) {
+         certList = CERT_FindUserCertsByUsage(CERT_GetDefaultCertDB(),
+                                              certUsageSSLClient,
+                                              PR_FALSE, chosenNickName == NULL,
+                                              pw_arg);
++        if (certList == NULL) {
++            return SECFailure;
++        }
+         /* filter only the certs that meet the nickname requirements */
+         if (chosenNickName) {
+             rv = CERT_FilterCertListByNickname(certList, chosenNickName,
+                                                pw_arg);
+         } else {
+             int nnames = 0;
+             char **names = ssl_DistNamesToStrings(caNames, &nnames);
+             rv = CERT_FilterCertListByCANames(certList, nnames, names,

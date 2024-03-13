@@ -1,0 +1,685 @@
+diff -up ./cmd/crmftest/testcrmf.c.sign_policy ./cmd/crmftest/testcrmf.c
+--- ./cmd/crmftest/testcrmf.c.sign_policy	2022-05-26 02:54:33.000000000 -0700
++++ ./cmd/crmftest/testcrmf.c	2022-06-20 16:47:35.023785628 -0700
+@@ -85,7 +85,7 @@
+ #include "sechash.h"
+ #endif
+ 
+-#define MAX_KEY_LEN 512
++#define MAX_KEY_LEN 1024
+ #define PATH_LEN 150
+ #define BUFF_SIZE 150
+ #define UID_BITS 800
+diff -up ./gtests/pk11_gtest/pk11_rsapkcs1_unittest.cc.sign_policy ./gtests/pk11_gtest/pk11_rsapkcs1_unittest.cc
+--- ./gtests/pk11_gtest/pk11_rsapkcs1_unittest.cc.sign_policy	2022-05-26 02:54:33.000000000 -0700
++++ ./gtests/pk11_gtest/pk11_rsapkcs1_unittest.cc	2022-06-20 16:47:35.024785635 -0700
+@@ -16,6 +16,7 @@
+ #include "secerr.h"
+ #include "sechash.h"
+ #include "pk11_signature_test.h"
++#include "blapit.h"
+ 
+ #include "testvectors/rsa_signature_2048_sha224-vectors.h"
+ #include "testvectors/rsa_signature_2048_sha256-vectors.h"
+@@ -109,7 +110,11 @@ class Pkcs11RsaPkcs1WycheproofTest
+  * Use 6 as the invalid value since modLen % 16 must be zero.
+  */
+ TEST(RsaPkcs1Test, Pkcs1MinimumPadding) {
+-  const size_t kRsaShortKeyBits = 736;
++#define RSA_SHORT_KEY_LENGTH 736
++/* if our minimum supported key length is big enough to handle
++ * our largest Hash function, we can't test a short length */
++#if RSA_MIN_MODULUS_BITS < RSA_SHORT_KEY_LENGTH
++  const size_t kRsaShortKeyBits = RSA_SHORT_KEY_LENGTH;
+   const size_t kRsaKeyBits = 752;
+   static const std::vector<uint8_t> kMsg{'T', 'E', 'S', 'T'};
+   static const std::vector<uint8_t> kSha512DigestInfo{
+@@ -209,6 +214,9 @@ TEST(RsaPkcs1Test, Pkcs1MinimumPadding)
+                               SEC_OID_PKCS1_RSA_ENCRYPTION, SEC_OID_SHA512,
+                               nullptr);
+   EXPECT_EQ(SECSuccess, rv);
++#else
++  GTEST_SKIP();
++#endif
+ }
+ 
+ TEST(RsaPkcs1Test, RequireNullParameter) {
+diff -up ./gtests/ssl_gtest/tls_subcerts_unittest.cc.sign_policy ./gtests/ssl_gtest/tls_subcerts_unittest.cc
+--- ./gtests/ssl_gtest/tls_subcerts_unittest.cc.sign_policy	2022-05-26 02:54:33.000000000 -0700
++++ ./gtests/ssl_gtest/tls_subcerts_unittest.cc	2022-06-20 16:47:35.024785635 -0700
+@@ -9,6 +9,8 @@
+ #include "prtime.h"
+ #include "secerr.h"
+ #include "ssl.h"
++#include "nss.h"
++#include "blapit.h"
+ 
+ #include "gtest_utils.h"
+ #include "tls_agent.h"
+@@ -348,9 +350,14 @@ static void GenerateWeakRsaKey(ScopedSEC
+   ScopedPK11SlotInfo slot(PK11_GetInternalSlot());
+   ASSERT_TRUE(slot);
+   PK11RSAGenParams rsaparams;
+-  // The absolute minimum size of RSA key that we can use with SHA-256 is
+-  // 256bit (hash) + 256bit (salt) + 8 (start byte) + 8 (end byte) = 528.
++// The absolute minimum size of RSA key that we can use with SHA-256 is
++// 256bit (hash) + 256bit (salt) + 8 (start byte) + 8 (end byte) = 528.
++#define RSA_WEAK_KEY 528
++#if RSA_MIN_MODULUS_BITS < RSA_WEAK_KEY
+   rsaparams.keySizeInBits = 528;
++#else
++  rsaparams.keySizeInBits = RSA_MIN_MODULUS_BITS + 1;
++#endif
+   rsaparams.pe = 65537;
+ 
+   // Bug 1012786: PK11_GenerateKeyPair can fail if there is insufficient
+@@ -390,6 +397,18 @@ TEST_P(TlsConnectTls13, DCWeakKey) {
+                                                 ssl_sig_rsa_pss_pss_sha256};
+   client_->SetSignatureSchemes(kSchemes, PR_ARRAY_SIZE(kSchemes));
+   server_->SetSignatureSchemes(kSchemes, PR_ARRAY_SIZE(kSchemes));
++#if RSA_MIN_MODULUS_BITS > RSA_WEAK_KEY
++  // save the MIN POLICY length.
++  PRInt32 minRsa;
++
++  ASSERT_EQ(SECSuccess, NSS_OptionGet(NSS_RSA_MIN_KEY_SIZE, &minRsa));
++#if RSA_MIN_MODULUS_BITS >= 2048
++  ASSERT_EQ(SECSuccess,
++            NSS_OptionSet(NSS_RSA_MIN_KEY_SIZE, RSA_MIN_MODULUS_BITS + 1024));
++#else
++  ASSERT_EQ(SECSuccess, NSS_OptionSet(NSS_RSA_MIN_KEY_SIZE, 2048));
++#endif
++#endif
+ 
+   ScopedSECKEYPrivateKey dc_priv;
+   ScopedSECKEYPublicKey dc_pub;
+@@ -412,6 +431,9 @@ TEST_P(TlsConnectTls13, DCWeakKey) {
+   auto cfilter = MakeTlsFilter<TlsExtensionCapture>(
+       client_, ssl_delegated_credentials_xtn);
+   ConnectExpectAlert(client_, kTlsAlertInsufficientSecurity);
++#if RSA_MIN_MODULUS_BITS > RSA_WEAK_KEY
++  ASSERT_EQ(SECSuccess, NSS_OptionSet(NSS_RSA_MIN_KEY_SIZE, minRsa));
++#endif
+ }
+ 
+ class ReplaceDCSigScheme : public TlsHandshakeFilter {
+diff -up ./lib/cryptohi/keyhi.h.sign_policy ./lib/cryptohi/keyhi.h
+--- ./lib/cryptohi/keyhi.h.sign_policy	2022-05-26 02:54:33.000000000 -0700
++++ ./lib/cryptohi/keyhi.h	2022-06-20 16:47:35.024785635 -0700
+@@ -53,6 +53,11 @@ extern unsigned SECKEY_PublicKeyStrength
+ extern unsigned SECKEY_PublicKeyStrengthInBits(const SECKEYPublicKey *pubk);
+ 
+ /*
++** Return the strength of the private key in bits
++*/
++extern unsigned SECKEY_PrivateKeyStrengthInBits(const SECKEYPrivateKey *privk);
++
++/*
+ ** Return the length of the signature in bytes
+ */
+ extern unsigned SECKEY_SignatureLen(const SECKEYPublicKey *pubk);
+diff -up ./lib/cryptohi/keyi.h.sign_policy ./lib/cryptohi/keyi.h
+--- ./lib/cryptohi/keyi.h.sign_policy	2022-05-26 02:54:33.000000000 -0700
++++ ./lib/cryptohi/keyi.h	2022-06-20 16:47:35.024785635 -0700
+@@ -4,6 +4,7 @@
+ 
+ #ifndef _KEYI_H_
+ #define _KEYI_H_
++#include "secerr.h"
+ 
+ SEC_BEGIN_PROTOS
+ /* NSS private functions */
+@@ -36,6 +37,9 @@ SECStatus sec_DecodeRSAPSSParamsToMechan
+                                             const SECItem *params,
+                                             CK_RSA_PKCS_PSS_PARAMS *mech);
+ 
++/* make sure the key length matches the policy for keyType */
++SECStatus seckey_EnforceKeySize(KeyType keyType, unsigned keyLength,
++                                SECErrorCodes error);
+ SEC_END_PROTOS
+ 
+ #endif /* _KEYHI_H_ */
+diff -up ./lib/cryptohi/seckey.c.sign_policy ./lib/cryptohi/seckey.c
+--- ./lib/cryptohi/seckey.c.sign_policy	2022-05-26 02:54:33.000000000 -0700
++++ ./lib/cryptohi/seckey.c	2022-06-20 16:47:35.025785641 -0700
+@@ -14,6 +14,7 @@
+ #include "secdig.h"
+ #include "prtime.h"
+ #include "keyi.h"
++#include "nss.h"
+ 
+ SEC_ASN1_MKSUB(SECOID_AlgorithmIDTemplate)
+ SEC_ASN1_MKSUB(SEC_IntegerTemplate)
+@@ -1042,6 +1043,62 @@ SECKEY_PublicKeyStrengthInBits(const SEC
+     return bitSize;
+ }
+ 
++unsigned
++SECKEY_PrivateKeyStrengthInBits(const SECKEYPrivateKey *privk)
++{
++    unsigned bitSize = 0;
++    CK_ATTRIBUTE_TYPE attribute = CKT_INVALID_TYPE;
++    SECItem params;
++    SECStatus rv;
++
++    if (!privk) {
++        PORT_SetError(SEC_ERROR_INVALID_KEY);
++        return 0;
++    }
++
++    /* interpret modulus length as key strength */
++    switch (privk->keyType) {
++        case rsaKey:
++        case rsaPssKey:
++        case rsaOaepKey:
++            /* some tokens don't export CKA_MODULUS on the private key,
++             * PK11_SignatureLen works around this if necessary */
++            bitSize = PK11_SignatureLen((SECKEYPrivateKey *)privk) * PR_BITS_PER_BYTE;
++            if (bitSize == -1) {
++                bitSize = 0;
++            }
++            return bitSize;
++        case dsaKey:
++        case fortezzaKey:
++        case dhKey:
++        case keaKey:
++            attribute = CKA_PRIME;
++            break;
++        case ecKey:
++            rv = PK11_ReadAttribute(privk->pkcs11Slot, privk->pkcs11ID,
++                                    CKA_EC_PARAMS, NULL, &params);
++            if ((rv != SECSuccess) || (params.data == NULL)) {
++                return 0;
++            }
++            bitSize = SECKEY_ECParamsToKeySize(&params);
++            PORT_Free(params.data);
++            return bitSize;
++        default:
++            PORT_SetError(SEC_ERROR_INVALID_KEY);
++            return 0;
++    }
++    PORT_Assert(attribute != CKT_INVALID_TYPE);
++    rv = PK11_ReadAttribute(privk->pkcs11Slot, privk->pkcs11ID,
++                            attribute, NULL, &params);
++    if ((rv != SECSuccess) || (params.data == NULL)) {
++        PORT_SetError(SEC_ERROR_INVALID_KEY);
++        return 0;
++    }
++    bitSize = SECKEY_BigIntegerBitLength(&params);
++    PORT_Free(params.data);
++    return bitSize;
++}
++
+ /* returns signature length in bytes (not bits) */
+ unsigned
+ SECKEY_SignatureLen(const SECKEYPublicKey *pubk)
+@@ -1212,6 +1269,51 @@ SECKEY_CopyPublicKey(const SECKEYPublicK
+ }
+ 
+ /*
++ * Check that a given key meets the policy limits for the given key
++ * size.
++ */
++SECStatus
++seckey_EnforceKeySize(KeyType keyType, unsigned keyLength, SECErrorCodes error)
++{
++    PRInt32 opt = -1;
++    PRInt32 optVal;
++    SECStatus rv;
++
++    switch (keyType) {
++        case rsaKey:
++        case rsaPssKey:
++        case rsaOaepKey:
++            opt = NSS_RSA_MIN_KEY_SIZE;
++            break;
++        case dsaKey:
++        case fortezzaKey:
++            opt = NSS_DSA_MIN_KEY_SIZE;
++            break;
++        case dhKey:
++        case keaKey:
++            opt = NSS_DH_MIN_KEY_SIZE;
++            break;
++        case ecKey:
++            opt = NSS_ECC_MIN_KEY_SIZE;
++            break;
++        case nullKey:
++        default:
++            PORT_SetError(SEC_ERROR_INVALID_KEY);
++            return SECFailure;
++    }
++    PORT_Assert(opt != -1);
++    rv = NSS_OptionGet(opt, &optVal);
++    if (rv != SECSuccess) {
++        return rv;
++    }
++    if (optVal < keyLength) {
++        PORT_SetError(error);
++        return SECFailure;
++    }
++    return SECSuccess;
++}
++
++/*
+  * Use the private key to find a public key handle. The handle will be on
+  * the same slot as the private key.
+  */
+diff -up ./lib/cryptohi/secsign.c.sign_policy ./lib/cryptohi/secsign.c
+--- ./lib/cryptohi/secsign.c.sign_policy	2022-05-26 02:54:33.000000000 -0700
++++ ./lib/cryptohi/secsign.c	2022-06-20 16:47:35.025785641 -0700
+@@ -15,6 +15,7 @@
+ #include "pk11func.h"
+ #include "secerr.h"
+ #include "keyi.h"
++#include "nss.h"
+ 
+ struct SGNContextStr {
+     SECOidTag signalg;
+@@ -32,6 +33,7 @@ sgn_NewContext(SECOidTag alg, SECItem *p
+     SECOidTag hashalg, signalg;
+     KeyType keyType;
+     PRUint32 policyFlags;
++    PRInt32 optFlags;
+     SECStatus rv;
+ 
+     /* OK, map a PKCS #7 hash and encrypt algorithm into
+@@ -56,6 +58,16 @@ sgn_NewContext(SECOidTag alg, SECItem *p
+         PORT_SetError(SEC_ERROR_INVALID_ALGORITHM);
+         return NULL;
+     }
++    if (NSS_OptionGet(NSS_KEY_SIZE_POLICY_FLAGS, &optFlags) != SECFailure) {
++        if (optFlags & NSS_KEY_SIZE_POLICY_SIGN_FLAG) {
++            rv = seckey_EnforceKeySize(key->keyType,
++                                       SECKEY_PrivateKeyStrengthInBits(key),
++                                       SEC_ERROR_SIGNATURE_ALGORITHM_DISABLED);
++            if (rv != SECSuccess) {
++                return NULL;
++            }
++        }
++    }
+     /* check the policy on the hash algorithm */
+     if ((NSS_GetAlgorithmPolicy(hashalg, &policyFlags) == SECFailure) ||
+         !(policyFlags & NSS_USE_ALG_IN_ANY_SIGNATURE)) {
+@@ -467,9 +479,20 @@ SGN_Digest(SECKEYPrivateKey *privKey,
+     SGNDigestInfo *di = 0;
+     SECOidTag enctag;
+     PRUint32 policyFlags;
++    PRInt32 optFlags;
+ 
+     result->data = 0;
+ 
++    if (NSS_OptionGet(NSS_KEY_SIZE_POLICY_FLAGS, &optFlags) != SECFailure) {
++        if (optFlags & NSS_KEY_SIZE_POLICY_SIGN_FLAG) {
++            rv = seckey_EnforceKeySize(privKey->keyType,
++                                       SECKEY_PrivateKeyStrengthInBits(privKey),
++                                       SEC_ERROR_SIGNATURE_ALGORITHM_DISABLED);
++            if (rv != SECSuccess) {
++                return SECFailure;
++            }
++        }
++    }
+     /* check the policy on the hash algorithm */
+     if ((NSS_GetAlgorithmPolicy(algtag, &policyFlags) == SECFailure) ||
+         !(policyFlags & NSS_USE_ALG_IN_ANY_SIGNATURE)) {
+diff -up ./lib/cryptohi/secvfy.c.sign_policy ./lib/cryptohi/secvfy.c
+--- ./lib/cryptohi/secvfy.c.sign_policy	2022-05-26 02:54:33.000000000 -0700
++++ ./lib/cryptohi/secvfy.c	2022-06-20 16:47:35.025785641 -0700
+@@ -16,6 +16,7 @@
+ #include "secdig.h"
+ #include "secerr.h"
+ #include "keyi.h"
++#include "nss.h"
+ 
+ /*
+ ** Recover the DigestInfo from an RSA PKCS#1 signature.
+@@ -467,6 +468,7 @@ vfy_CreateContext(const SECKEYPublicKey
+     unsigned int sigLen;
+     KeyType type;
+     PRUint32 policyFlags;
++    PRInt32 optFlags;
+ 
+     /* make sure the encryption algorithm matches the key type */
+     /* RSA-PSS algorithm can be used with both rsaKey and rsaPssKey */
+@@ -476,7 +478,16 @@ vfy_CreateContext(const SECKEYPublicKey
+         PORT_SetError(SEC_ERROR_PKCS7_KEYALG_MISMATCH);
+         return NULL;
+     }
+-
++    if (NSS_OptionGet(NSS_KEY_SIZE_POLICY_FLAGS, &optFlags) != SECFailure) {
++        if (optFlags & NSS_KEY_SIZE_POLICY_VERIFY_FLAG) {
++            rv = seckey_EnforceKeySize(key->keyType,
++                                       SECKEY_PublicKeyStrengthInBits(key),
++                                       SEC_ERROR_SIGNATURE_ALGORITHM_DISABLED);
++            if (rv != SECSuccess) {
++                return NULL;
++            }
++        }
++    }
+     /* check the policy on the encryption algorithm */
+     if ((NSS_GetAlgorithmPolicy(encAlg, &policyFlags) == SECFailure) ||
+         !(policyFlags & NSS_USE_ALG_IN_ANY_SIGNATURE)) {
+diff -up ./lib/freebl/blapit.h.sign_policy ./lib/freebl/blapit.h
+--- ./lib/freebl/blapit.h.sign_policy	2022-05-26 02:54:33.000000000 -0700
++++ ./lib/freebl/blapit.h	2022-06-20 16:47:35.025785641 -0700
+@@ -135,7 +135,7 @@ typedef int __BLAPI_DEPRECATED __attribu
+  * These values come from the initial key size limits from the PKCS #11
+  * module. They may be arbitrarily adjusted to any value freebl supports.
+  */
+-#define RSA_MIN_MODULUS_BITS 128
++#define RSA_MIN_MODULUS_BITS 1023 /* 128 */
+ #define RSA_MAX_MODULUS_BITS 16384
+ #define RSA_MAX_EXPONENT_BITS 64
+ #define DH_MIN_P_BITS 128
+diff -up ./lib/nss/nss.h.sign_policy ./lib/nss/nss.h
+--- ./lib/nss/nss.h.sign_policy	2022-05-26 02:54:33.000000000 -0700
++++ ./lib/nss/nss.h	2022-06-20 16:47:35.026785647 -0700
+@@ -302,6 +302,28 @@ SECStatus NSS_UnregisterShutdown(NSS_Shu
+ #define NSS_DEFAULT_LOCKS 0x00d /* lock default values */
+ #define NSS_DEFAULT_SSL_LOCK 1  /* lock the ssl default values */
+ 
++/* NSS_KEY_SIZE_POLICY controls what kinds of operations are subject to
++ * the NSS_XXX_MIN_KEY_SIZE values.
++ *    NSS_KEY_SIZE_POLICY_FLAGS sets and clears all the flags to the input
++ *                              value
++ *     On get it returns all the flags
++ *    NSS_KEY_SIZE_POLICY_SET_FLAGS sets only the flags=1 in theinput value and
++ *                                  does not affect the other flags
++ *     On get it returns all the flags
++ *    NSS_KEY_SIZE_POLICY_CLEAR_FLAGS clears only the flags=1 in the input
++ *                                    value and does not affect the other flags
++ *     On get it returns all the compliment of all the flags
++ *     (cleared flags == 1) */
++#define NSS_KEY_SIZE_POLICY_FLAGS 0x00e
++#define NSS_KEY_SIZE_POLICY_SET_FLAGS 0x00f
++#define NSS_KEY_SIZE_POLICY_CLEAR_FLAGS 0x010
++/* currently defined flags */
++#define NSS_KEY_SIZE_POLICY_SSL_FLAG 1
++#define NSS_KEY_SIZE_POLICY_VERIFY_FLAG 2
++#define NSS_KEY_SIZE_POLICY_SIGN_FLAG 4
++
++#define NSS_ECC_MIN_KEY_SIZE 0x011
++
+ /*
+  * Set and get global options for the NSS library.
+  */
+diff -up ./lib/nss/nssoptions.c.sign_policy ./lib/nss/nssoptions.c
+--- ./lib/nss/nssoptions.c.sign_policy	2022-05-26 02:54:33.000000000 -0700
++++ ./lib/nss/nssoptions.c	2022-06-20 16:47:35.026785647 -0700
+@@ -26,6 +26,8 @@ struct nssOps {
+     PRInt32 dtlsVersionMaxPolicy;
+     PRInt32 pkcs12DecodeForceUnicode;
+     PRInt32 defaultLocks;
++    PRInt32 keySizePolicyFlags;
++    PRInt32 eccMinKeySize;
+ };
+ 
+ static struct nssOps nss_ops = {
+@@ -37,7 +39,9 @@ static struct nssOps nss_ops = {
+     1,
+     0xffff,
+     PR_FALSE,
+-    0
++    0,
++    NSS_KEY_SIZE_POLICY_SSL_FLAG,
++    SSL_ECC_MIN_CURVE_BITS
+ };
+ 
+ SECStatus
+@@ -78,6 +82,18 @@ NSS_OptionSet(PRInt32 which, PRInt32 val
+         case NSS_DEFAULT_LOCKS:
+             nss_ops.defaultLocks = value;
+             break;
++        case NSS_KEY_SIZE_POLICY_FLAGS:
++            nss_ops.keySizePolicyFlags = value;
++            break;
++        case NSS_KEY_SIZE_POLICY_SET_FLAGS:
++            nss_ops.keySizePolicyFlags |= value;
++            break;
++        case NSS_KEY_SIZE_POLICY_CLEAR_FLAGS:
++            nss_ops.keySizePolicyFlags &= ~value;
++            break;
++        case NSS_ECC_MIN_KEY_SIZE:
++            nss_ops.eccMinKeySize = value;
++            break;
+         default:
+             PORT_SetError(SEC_ERROR_INVALID_ARGS);
+             rv = SECFailure;
+@@ -119,6 +135,16 @@ NSS_OptionGet(PRInt32 which, PRInt32 *va
+         case NSS_DEFAULT_LOCKS:
+             *value = nss_ops.defaultLocks;
+             break;
++        case NSS_KEY_SIZE_POLICY_FLAGS:
++        case NSS_KEY_SIZE_POLICY_SET_FLAGS:
++            *value = nss_ops.keySizePolicyFlags;
++            break;
++        case NSS_KEY_SIZE_POLICY_CLEAR_FLAGS:
++            *value = ~nss_ops.keySizePolicyFlags;
++            break;
++        case NSS_ECC_MIN_KEY_SIZE:
++            *value = nss_ops.eccMinKeySize;
++            break;
+         default:
+             rv = SECFailure;
+     }
+diff -up ./lib/nss/nssoptions.h.sign_policy ./lib/nss/nssoptions.h
+--- ./lib/nss/nssoptions.h.sign_policy	2022-05-26 02:54:33.000000000 -0700
++++ ./lib/nss/nssoptions.h	2022-06-20 16:47:35.026785647 -0700
+@@ -18,3 +18,5 @@
+  * happens because NSS used to count bit lengths incorrectly. */
+ #define SSL_DH_MIN_P_BITS 1023
+ #define SSL_DSA_MIN_P_BITS 1023
++/* not really used by SSL, but define it here for consistency */
++#define SSL_ECC_MIN_CURVE_BITS 256
+diff -up ./lib/pk11wrap/pk11kea.c.sign_policy ./lib/pk11wrap/pk11kea.c
+--- ./lib/pk11wrap/pk11kea.c.sign_policy	2022-05-26 02:54:33.000000000 -0700
++++ ./lib/pk11wrap/pk11kea.c	2022-06-20 16:47:35.026785647 -0700
+@@ -78,15 +78,14 @@ pk11_KeyExchange(PK11SlotInfo *slot, CK_
+         if (privKeyHandle == CK_INVALID_HANDLE) {
+             PK11RSAGenParams rsaParams;
+ 
+-            if (symKeyLength > 53) /* bytes */ {
+-                /* we'd have to generate an RSA key pair > 512 bits long,
++            if (symKeyLength > 120) /* bytes */ {
++                /* we'd have to generate an RSA key pair > 1024 bits long,
+                 ** and that's too costly.  Don't even try.
+                 */
+                 PORT_SetError(SEC_ERROR_CANNOT_MOVE_SENSITIVE_KEY);
+                 goto rsa_failed;
+             }
+-            rsaParams.keySizeInBits =
+-                (symKeyLength > 21 || symKeyLength == 0) ? 512 : 256;
++            rsaParams.keySizeInBits = 1024;
+             rsaParams.pe = 0x10001;
+             privKey = PK11_GenerateKeyPair(slot, CKM_RSA_PKCS_KEY_PAIR_GEN,
+                                            &rsaParams, &pubKey, PR_FALSE, PR_TRUE, symKey->cx);
+diff -up ./lib/pk11wrap/pk11pars.c.sign_policy ./lib/pk11wrap/pk11pars.c
+--- ./lib/pk11wrap/pk11pars.c.sign_policy	2022-06-20 16:47:35.004785510 -0700
++++ ./lib/pk11wrap/pk11pars.c	2022-06-20 16:47:35.026785647 -0700
+@@ -427,12 +427,21 @@ static const optionFreeDef sslOptList[]
+     { CIPHER_NAME("DTLS1.3"), 0x304 },
+ };
+ 
++static const optionFreeDef keySizeFlagsList[] = {
++    { CIPHER_NAME("KEY-SIZE-SSL"), NSS_KEY_SIZE_POLICY_SSL_FLAG },
++    { CIPHER_NAME("KEY-SIZE-SIGN"), NSS_KEY_SIZE_POLICY_SIGN_FLAG },
++    { CIPHER_NAME("KEY-SIZE-VERIFY"), NSS_KEY_SIZE_POLICY_VERIFY_FLAG },
++};
++
+ static const optionFreeDef freeOptList[] = {
+ 
+     /* Restrictions for asymetric keys */
+     { CIPHER_NAME("RSA-MIN"), NSS_RSA_MIN_KEY_SIZE },
+     { CIPHER_NAME("DH-MIN"), NSS_DH_MIN_KEY_SIZE },
+     { CIPHER_NAME("DSA-MIN"), NSS_DSA_MIN_KEY_SIZE },
++    { CIPHER_NAME("ECC-MIN"), NSS_ECC_MIN_KEY_SIZE },
++    /* what operations doe the key size apply to */
++    { CIPHER_NAME("KEY-SIZE-FLAGS"), NSS_KEY_SIZE_POLICY_FLAGS },
+     /* constraints on SSL Protocols */
+     { CIPHER_NAME("TLS-VERSION-MIN"), NSS_TLS_VERSION_MIN_POLICY },
+     { CIPHER_NAME("TLS-VERSION-MAX"), NSS_TLS_VERSION_MAX_POLICY },
+@@ -540,6 +549,7 @@ secmod_getPolicyOptValue(const char *pol
+         *result = val;
+         return SECSuccess;
+     }
++    /* handle any ssl strings */
+     for (i = 0; i < PR_ARRAY_SIZE(sslOptList); i++) {
+         if (policyValueLength == sslOptList[i].name_size &&
+             PORT_Strncasecmp(sslOptList[i].name, policyValue,
+@@ -548,7 +558,29 @@ secmod_getPolicyOptValue(const char *pol
+             return SECSuccess;
+         }
+     }
+-    return SECFailure;
++    /* handle key_size flags. Each flag represents a bit, which
++     * gets or'd together. They can be separated by , | or + */
++    val = 0;
++    while (*policyValue) {
++        PRBool found = PR_FALSE;
++        for (i = 0; i < PR_ARRAY_SIZE(keySizeFlagsList); i++) {
++            if (PORT_Strncasecmp(keySizeFlagsList[i].name, policyValue,
++                                 keySizeFlagsList[i].name_size) == 0) {
++                val |= keySizeFlagsList[i].option;
++                found = PR_TRUE;
++                policyValue += keySizeFlagsList[i].name_size;
++                break;
++            }
++        }
++        if (!found) {
++            return SECFailure;
++        }
++        if (*policyValue == ',' || *policyValue == '|' || *policyValue == '+') {
++            policyValue++;
++        }
++    }
++    *result = val;
++    return SECSuccess;
+ }
+ 
+ /* Policy operations:
+diff -up ./lib/ssl/ssl3con.c.sign_policy ./lib/ssl/ssl3con.c
+--- ./lib/ssl/ssl3con.c.sign_policy	2022-06-20 16:47:34.998785473 -0700
++++ ./lib/ssl/ssl3con.c	2022-06-20 16:47:35.028785660 -0700
+@@ -7409,6 +7409,8 @@ ssl_HandleDHServerKeyExchange(sslSocket
+     unsigned dh_p_bits;
+     unsigned dh_g_bits;
+     PRInt32 minDH;
++    PRInt32 optval;
++    PRBool usePolicyLength = PR_FALSE;
+ 
+     SSL3Hashes hashes;
+     SECItem signature = { siBuffer, NULL, 0 };
+@@ -7419,8 +7421,13 @@ ssl_HandleDHServerKeyExchange(sslSocket
+     if (rv != SECSuccess) {
+         goto loser; /* malformed. */
+     }
++    rv = NSS_OptionGet(NSS_KEY_SIZE_POLICY_FLAGS, &optval);
++    if (rv == SECSuccess) {
++        usePolicyLength = (PRBool)((optval & NSS_KEY_SIZE_POLICY_SSL_FLAG) == NSS_KEY_SIZE_POLICY_SSL_FLAG);
++    }
+ 
+-    rv = NSS_OptionGet(NSS_DH_MIN_KEY_SIZE, &minDH);
++    rv = usePolicyLength ? NSS_OptionGet(NSS_DH_MIN_KEY_SIZE, &minDH)
++                         : SECFailure;
+     if (rv != SECSuccess || minDH <= 0) {
+         minDH = SSL_DH_MIN_P_BITS;
+     }
+@@ -11411,13 +11418,20 @@ ssl_SetAuthKeyBits(sslSocket *ss, const
+     SECStatus rv;
+     PRUint32 minKey;
+     PRInt32 optval;
++    PRBool usePolicyLength = PR_TRUE;
++
++    rv = NSS_OptionGet(NSS_KEY_SIZE_POLICY_FLAGS, &optval);
++    if (rv == SECSuccess) {
++        usePolicyLength = (PRBool)((optval & NSS_KEY_SIZE_POLICY_SSL_FLAG) == NSS_KEY_SIZE_POLICY_SSL_FLAG);
++    }
+ 
+     ss->sec.authKeyBits = SECKEY_PublicKeyStrengthInBits(pubKey);
+     switch (SECKEY_GetPublicKeyType(pubKey)) {
+         case rsaKey:
+         case rsaPssKey:
+         case rsaOaepKey:
+-            rv = NSS_OptionGet(NSS_RSA_MIN_KEY_SIZE, &optval);
++            rv = usePolicyLength ? NSS_OptionGet(NSS_RSA_MIN_KEY_SIZE, &optval)
++                                 : SECFailure;
+             if (rv == SECSuccess && optval > 0) {
+                 minKey = (PRUint32)optval;
+             } else {
+@@ -11426,7 +11440,8 @@ ssl_SetAuthKeyBits(sslSocket *ss, const
+             break;
+ 
+         case dsaKey:
+-            rv = NSS_OptionGet(NSS_DSA_MIN_KEY_SIZE, &optval);
++            rv = usePolicyLength ? NSS_OptionGet(NSS_DSA_MIN_KEY_SIZE, &optval)
++                                 : SECFailure;
+             if (rv == SECSuccess && optval > 0) {
+                 minKey = (PRUint32)optval;
+             } else {
+@@ -11435,7 +11450,8 @@ ssl_SetAuthKeyBits(sslSocket *ss, const
+             break;
+ 
+         case dhKey:
+-            rv = NSS_OptionGet(NSS_DH_MIN_KEY_SIZE, &optval);
++            rv = usePolicyLength ? NSS_OptionGet(NSS_DH_MIN_KEY_SIZE, &optval)
++                                 : SECFailure;
+             if (rv == SECSuccess && optval > 0) {
+                 minKey = (PRUint32)optval;
+             } else {
+@@ -11444,9 +11460,15 @@ ssl_SetAuthKeyBits(sslSocket *ss, const
+             break;
+ 
+         case ecKey:
+-            /* Don't check EC strength here on the understanding that we only
+-             * support curves we like. */
+-            minKey = ss->sec.authKeyBits;
++            rv = usePolicyLength ? NSS_OptionGet(NSS_ECC_MIN_KEY_SIZE, &optval)
++                                 : SECFailure;
++            if (rv == SECSuccess && optval > 0) {
++                minKey = (PRUint32)optval;
++            } else {
++                /* Don't check EC strength here on the understanding that we
++                 * only support curves we like. */
++                minKey = ss->sec.authKeyBits;
++            }
+             break;
+ 
+         default:
+diff -up ./tests/policy/crypto-policy.txt.sign_policy ./tests/policy/crypto-policy.txt
+--- ./tests/policy/crypto-policy.txt.sign_policy	2022-05-26 02:54:33.000000000 -0700
++++ ./tests/policy/crypto-policy.txt	2022-06-20 16:47:35.028785660 -0700
+@@ -6,6 +6,8 @@
+ 0 disallow=ALL_allow=HMAC-SHA256:HMAC-SHA1:HMAC-SHA384:HMAC-SHA512:SECP256R1:SECP384R1:SECP521R1:aes256-gcm:chacha20-poly1305:aes256-cbc:camellia256-cbc:aes128-gcm:aes128-cbc:camellia128-cbc:SHA256:SHA384:SHA512:SHA1:ECDHE-RSA:ECDHE-ECDSA:RSA:DHE-RSA:rsa-pkcs:rsa-pss:ecdsa:tls-version-min=tls1.0:dtls-version-min=dtls1.0:DH-MIN=1023:DSA-MIN=2048:RSA-MIN=2048 NSS-POLICY-INFO.*LOADED-SUCCESSFULLY Standard policy
+ 0 disallow=ALL_allow=HMAC-SHA1:HMAC-SHA256:HMAC-SHA384:HMAC-SHA512:SECP256R1:SECP384R1:SECP521R1:aes256-gcm:chacha20-poly1305:aes256-cbc:camellia256-cbc:aes128-gcm:aes128-cbc:camellia128-cbc:des-ede3-cbc:rc4:SHA256:SHA384:SHA512:SHA1:ECDHE-RSA:ECDHE-ECDSA:RSA:DHE-RSA:DHE-DSS:rsa-pkcs:rsa-pss:ecdsa:tls-version-min=tls1.0:dtls-version-min=tls1.0:DH-MIN=1023:DSA-MIN=1023:RSA-MIN=1023 NSS-POLICY-INFO.*LOADED-SUCCESSFULLY Legacy policy
+ 0 disallow=ALL_allow=HMAC-SHA256:HMAC-SHA384:HMAC-SHA512:SECP384R1:SECP521R1:aes256-gcm:chacha20-poly1305:SHA384:SHA512:ECDHE-RSA:ECDHE-ECDSA:RSA:DHE-RSA:rsa-pkcs:rsa-pss:ecdsa:tls-version-min=tls1.2:dtls-version-min=dtls1.2:DH-MIN=3072:DSA-MIN=3072:RSA-MIN=3072 NSS-POLICY-INFO.*LOADED-SUCCESSFULLY Reduced policy
++0 disallow=ALL_allow=HMAC-SHA256:HMAC-SHA384:HMAC-SHA512:SECP384R1:SECP521R1:aes256-gcm:chacha20-poly1305:SHA384:SHA512:ECDHE-RSA:ECDHE-ECDSA:RSA:DHE-RSA:rsa-pkcs:rsa-pss:ecdsa:tls-version-min=tls1.2:dtls-version-min=dtls1.2:DH-MIN=3072:DSA-MIN=3072:RSA-MIN=3072:KEY-SIZE-FLAGS=KEY-SIZE-SSL,KEY-SIZE-SIGN,KEY-SIZE-VERIFY NSS-POLICY-INFO.*LOADED-SUCCESSFULLY Valid key size
++2 disallow=ALL_allow=HMAC-SHA256:HMAC-SHA384:HMAC-SHA512:SECP384R1:SECP521R1:aes256-gcm:chacha20-poly1305:SHA384:SHA512:ECDHE-RSA:ECDHE-ECDSA:RSA:DHE-RSA:rsa-pkcs:rsa-pss:ecdsa:tls-version-min=tls1.2:dtls-version-min=dtls1.2:DH-MIN=3072:DSA-MIN=3072:RSA-MIN=3072:KEY-SIZE-FLAGS=UNKNOWN,KEY-SIZE-SIGN,KEY-SIZE-VERIFY NSS-POLICY-FAIL.*unknown.* Invalid key size
+ 2 disallow=ALL_allow=dtls-version-min=:dtls-version-max= NSS-POLICY-FAIL Missing value
+ 2 disallow=ALL_allow=RSA-MIN=whatever NSS-POLICY-FAIL Invalid value
+ 2 disallow=ALL_allow=flower NSS-POLICY-FAIL Invalid identifier
+diff -up ./tests/ssl/sslpolicy.txt.sign_policy ./tests/ssl/sslpolicy.txt
+--- ./tests/ssl/sslpolicy.txt.sign_policy	2022-06-20 16:47:35.028785660 -0700
++++ ./tests/ssl/sslpolicy.txt	2022-06-20 16:50:08.958742135 -0700
+@@ -196,6 +196,11 @@
+ # rsa-pkcs, rsa-pss, and ecdsa policy checking reverted in rhel8 for binary
+ # compatibility reasons
+ #  1 noECC  SSL3   d    disallow=rsa-pkcs Disallow RSA PKCS 1 Signatures Explicitly
++  1 noECC  SSL3   d    allow=rsa-min=16384:key-size-flags=key-size-verify Restrict RSA keys on signature verification
++  1 noECC  SSL3   d    allow=rsa-min=16384:key-size-flags=key-size-sign Restrict RSA keys on signing
++  1 noECC  SSL3   d    allow=rsa-min=16384:key-size-flags=key-size-ssl Restrict RSA keys when used in SSL
++  0 noECC  SSL3   d    allow=rsa-min=1023 Restrict RSA keys when used in SSL
++
+ # test default settings
+ # NOTE: tstclient will attempt to overide the defaults, so we detect we
+ # were successful by locking in our settings
+diff -up ./tests/dbupgrade/dbupgrade.sh.sign_policy ./tests/dbupgrade/dbupgrade.sh
+--- ./tests/dbupgrade/dbupgrade.sh.sign_policy	2022-06-22 08:43:55.905407738 -0700
++++ ./tests/dbupgrade/dbupgrade.sh	2022-06-22 08:43:58.837426779 -0700
+@@ -69,7 +69,7 @@ dbupgrade_main()
+ 		echo $i
+ 		if [ -d $i ]; then
+ 			echo "upgrading db $i"
+-			${BINDIR}/certutil -G -g 512 -d sql:$i -f ${PWFILE} -z ${NOISE_FILE} 2>&1
++			${BINDIR}/certutil -G -g 1024 -d sql:$i -f ${PWFILE} -z ${NOISE_FILE} 2>&1
+ 			html_msg $? 0 "Upgrading $i"
+ 		else
+ 			echo "skipping db $i"

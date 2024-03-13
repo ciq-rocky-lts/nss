@@ -1,0 +1,522 @@
+diff --git a/cmd/bltest/blapitest.c b/cmd/bltest/blapitest.c
+--- a/cmd/bltest/blapitest.c
++++ b/cmd/bltest/blapitest.c
+@@ -3870,17 +3870,17 @@ main(int argc, char **argv)
+         rv = blapi_selftest(modesToTest, numModesToTest, inoff, outoff,
+                             encrypt, decrypt);
+         PORT_Free(cipherInfo);
+         return rv == SECSuccess ? 0 : 1;
+     }
+ 
+     /* Do FIPS self-test */
+     if (bltest.commands[cmd_FIPS].activated) {
+-        CK_RV ckrv = sftk_FIPSEntryOK();
++        CK_RV ckrv = sftk_FIPSEntryOK(PR_FALSE);
+         fprintf(stdout, "CK_RV: %ld.\n", ckrv);
+         PORT_Free(cipherInfo);
+         if (ckrv == CKR_OK)
+             return SECSuccess;
+         return SECFailure;
+     }
+ 
+     /*
+diff --git a/cmd/pk11mode/pk11mode.c b/cmd/pk11mode/pk11mode.c
+--- a/cmd/pk11mode/pk11mode.c
++++ b/cmd/pk11mode/pk11mode.c
+@@ -318,23 +318,25 @@ static PRBool verbose = PR_FALSE;
+ 
+ int
+ main(int argc, char **argv)
+ {
+     CK_C_GetFunctionList pC_GetFunctionList;
+     CK_FUNCTION_LIST_PTR pFunctionList;
+     CK_RV crv = CKR_OK;
+     CK_C_INITIALIZE_ARGS_NSS initArgs;
++    CK_C_INITIALIZE_ARGS_NSS initArgsRerun; /* rerun selftests */
+     CK_SLOT_ID *pSlotList = NULL;
+     CK_TOKEN_INFO tokenInfo;
+     CK_ULONG slotID = 0; /* slotID == 0 for FIPSMODE */
+ 
+     CK_UTF8CHAR *pwd = NULL;
+     CK_ULONG pwdLen = 0;
+     char *moduleSpec = NULL;
++    char *moduleSpecRerun = NULL;
+     char *configDir = NULL;
+     char *dbPrefix = NULL;
+     char *disableUnload = NULL;
+     PRBool doForkTests = PR_TRUE;
+ 
+     PLOptStatus os;
+     PLOptState *opt = PL_CreateOptState(argc, argv, "nvhf:Fd:p:");
+     while (PL_OPT_EOL != (os = PL_GetNextOpt(opt))) {
+@@ -458,18 +460,23 @@ main(int argc, char **argv)
+     initArgs.CreateMutex = NULL;
+     initArgs.DestroyMutex = NULL;
+     initArgs.LockMutex = NULL;
+     initArgs.UnlockMutex = NULL;
+     initArgs.flags = CKF_OS_LOCKING_OK;
+     moduleSpec = PR_smprintf("configdir='%s' certPrefix='%s' "
+                              "keyPrefix='%s' secmod='secmod.db' flags= ",
+                              configDir, dbPrefix, dbPrefix);
++    moduleSpecRerun = PR_smprintf("configdir='%s' certPrefix='%s' "
++                             "keyPrefix='%s' secmod='secmod.db' flags=forcePOST ",
++                             configDir, dbPrefix, dbPrefix);
+     initArgs.LibraryParameters = (CK_CHAR_PTR *)moduleSpec;
+     initArgs.pReserved = NULL;
++    initArgsRerun = initArgs;
++    initArgsRerun.LibraryParameters = (CK_CHAR_PTR *)moduleSpecRerun;
+ 
+     /*DebugBreak();*/
+     /* FIPSMODE invokes FC_Initialize as pFunctionList->C_Initialize */
+     /* NSS cryptographic module library initialization for the FIPS  */
+     /* Approved mode when FC_Initialize is envoked will perfom       */
+     /* software integrity test, and power-up self-tests before       */
+     /* FC_Initialize returns                                         */
+     crv = pFunctionList->C_Initialize(&initArgs);
+@@ -705,17 +712,17 @@ main(int argc, char **argv)
+         PKM_Error("PKM_HybridMode failed with 0x%08X, %-26s\n", crv,
+                   PKM_CK_RVtoStr(crv));
+         goto cleanup;
+     }
+ 
+     if (doForkTests) {
+         /* testing one more C_Initialize / C_Finalize to exercise getpid()
+          * fork check code */
+-        crv = pFunctionList->C_Initialize(&initArgs);
++        crv = pFunctionList->C_Initialize(&initArgsRerun);
+         if (crv == CKR_OK) {
+             PKM_LogIt("C_Initialize succeeded\n");
+         } else {
+             PKM_Error("C_Initialize failed with 0x%08X, %-26s\n", crv,
+                       PKM_CK_RVtoStr(crv));
+             goto cleanup;
+         }
+         crv = pFunctionList->C_Finalize(NULL);
+@@ -741,16 +748,19 @@ cleanup:
+         free(configDir);
+     }
+     if (dbPrefix) {
+         free(dbPrefix);
+     }
+     if (moduleSpec) {
+         PR_smprintf_free(moduleSpec);
+     }
++    if (moduleSpecRerun) {
++        PR_smprintf_free(moduleSpecRerun);
++    }
+ 
+ #ifdef _WIN32
+     FreeLibrary(hModule);
+ #else
+     disableUnload = PR_GetEnvSecure("NSS_DISABLE_UNLOAD");
+     if (!disableUnload) {
+         PR_UnloadLibrary(lib);
+     }
+diff --git a/lib/freebl/blapii.h b/lib/freebl/blapii.h
+--- a/lib/freebl/blapii.h
++++ b/lib/freebl/blapii.h
+@@ -24,17 +24,17 @@ typedef SECStatus (*freeblAeadFunc)(void
+                                     void *params, unsigned int paramsLen,
+                                     const unsigned char *aad, unsigned int aadLen,
+                                     unsigned int blocksize);
+ typedef void (*freeblDestroyFunc)(void *cx, PRBool freeit);
+ 
+ SEC_BEGIN_PROTOS
+ 
+ #ifndef NSS_FIPS_DISABLED
+-SECStatus BL_FIPSEntryOK(PRBool freeblOnly);
++SECStatus BL_FIPSEntryOK(PRBool freeblOnly, PRBool rerun);
+ PRBool BL_POSTRan(PRBool freeblOnly);
+ #endif
+ 
+ #if defined(XP_UNIX) && !defined(NO_FORK_CHECK)
+ 
+ extern PRBool bl_parentForkedAfterC_Initialize;
+ 
+ #define SKIP_AFTER_FORK(x)                 \
+diff --git a/lib/freebl/blapit.h b/lib/freebl/blapit.h
+--- a/lib/freebl/blapit.h
++++ b/lib/freebl/blapit.h
+@@ -223,16 +223,21 @@ typedef int __BLAPI_DEPRECATED __attribu
+  *
+  * If we arbitrarily set p = 10^-18 (1 chance in trillion trillion operation)
+  * we get GCMIV_RANDOM_BIRTHDAY_BITS = -(-18)/.301 -1 = 59 (.301 = log10 2)
+  * GCMIV_RANDOM_BIRTHDAY_BITS should be at least 59, call it a round 64. NOTE:
+  * the variable IV size for TLS is 64 bits, which explains why it's not safe
+  * to use a random value for the nonce in TLS. */
+ #define GCMIV_RANDOM_BIRTHDAY_BITS 64
+ 
++/* flag to tell BLAPI_Verify* to rerun the post and integrity tests */
++#define BLAPI_FIPS_RERUN_FLAG '\377'  /* 0xff, 255 invalide code for UFT8/ASCII */
++#define BLAPI_FIPS_RERUN_FLAG_STRING "\377"  /* The above as a C string */
++
++
+ /***************************************************************************
+ ** Opaque objects
+ */
+ 
+ struct DESContextStr;
+ struct RC2ContextStr;
+ struct RC4ContextStr;
+ struct RC5ContextStr;
+diff --git a/lib/freebl/fipsfreebl.c b/lib/freebl/fipsfreebl.c
+--- a/lib/freebl/fipsfreebl.c
++++ b/lib/freebl/fipsfreebl.c
+@@ -2211,29 +2211,37 @@ bl_startup_tests(void)
+ }
+ 
+ /*
+  * this is called from the freebl init entry points that controll access to
+  * all other freebl functions. This prevents freebl from operating if our
+  * power on selftest failed.
+  */
+ SECStatus
+-BL_FIPSEntryOK(PRBool freebl_only)
++BL_FIPSEntryOK(PRBool freebl_only, PRBool rerun)
+ {
+ #ifdef NSS_NO_INIT_SUPPORT
+     /* this should only be set on platforms that can't handle one of the INIT
+     * schemes.  This code allows those platforms to continue to function,
+     * though they don't meet the strict NIST requirements. If NSS_NO_INIT_SUPPORT
+     * is not set, and init support has not been properly enabled, freebl
+     * will always fail because of the test below
+     */
+     if (!self_tests_freebl_ran) {
+         bl_startup_tests();
+     }
+ #endif
++    if (rerun) {
++        /* reset the flags */
++        self_tests_freebl_ran = PR_FALSE;
++        self_tests_success = PR_FALSE;
++        self_tests_success = PR_FALSE;
++        self_tests_freebl_success = PR_FALSE;
++        bl_startup_tests();
++    }
+     /* if the general self tests succeeded, we're done */
+     if (self_tests_success) {
+         return SECSuccess;
+     }
+     /* standalone freebl can initialize */
+     if (freebl_only && self_tests_freebl_success) {
+         return SECSuccess;
+     }
+diff --git a/lib/freebl/nsslowhash.c b/lib/freebl/nsslowhash.c
+--- a/lib/freebl/nsslowhash.c
++++ b/lib/freebl/nsslowhash.c
+@@ -55,17 +55,17 @@ NSSLOW_Init(void)
+ #ifdef FREEBL_NO_DEPEND
+     (void)FREEBL_InitStubs();
+ #endif
+ 
+ #ifndef NSS_FIPS_DISABLED
+     /* make sure the FIPS product is installed if we are trying to
+      * go into FIPS mode */
+     if (nsslow_GetFIPSEnabled()) {
+-        if (BL_FIPSEntryOK(PR_TRUE) != SECSuccess) {
++        if (BL_FIPSEntryOK(PR_TRUE, PR_FALSE) != SECSuccess) {
+             PORT_SetError(SEC_ERROR_LIBRARY_FAILURE);
+             post_failed = PR_TRUE;
+             return NULL;
+         }
+     }
+ #endif
+     post_failed = PR_FALSE;
+ 
+diff --git a/lib/freebl/shvfy.c b/lib/freebl/shvfy.c
+--- a/lib/freebl/shvfy.c
++++ b/lib/freebl/shvfy.c
+@@ -282,52 +282,62 @@ readItem(PRFileDesc *fd, SECItem *item)
+         PORT_Free(item->data);
+         item->data = NULL;
+         item->len = 0;
+         return SECFailure;
+     }
+     return SECSuccess;
+ }
+ 
+-static PRBool blapi_SHVerifyFile(const char *shName, PRBool self);
++static PRBool blapi_SHVerifyFile(const char *shName, PRBool self, PRBool rerun);
+ 
+ static PRBool
+-blapi_SHVerify(const char *name, PRFuncPtr addr, PRBool self)
++blapi_SHVerify(const char *name, PRFuncPtr addr, PRBool self, PRBool rerun)
+ {
+     PRBool result = PR_FALSE; /* if anything goes wrong,
+                    * the signature does not verify */
+     /* find our shared library name */
+     char *shName = PR_GetLibraryFilePathname(name, addr);
+     if (!shName) {
+         goto loser;
+     }
+-    result = blapi_SHVerifyFile(shName, self);
++    result = blapi_SHVerifyFile(shName, self, rerun);
+ 
+ loser:
+     if (shName != NULL) {
+         PR_Free(shName);
+     }
+ 
+     return result;
+ }
+ 
+ PRBool
+ BLAPI_SHVerify(const char *name, PRFuncPtr addr)
+ {
+-    return blapi_SHVerify(name, addr, PR_FALSE);
++    PRBool rerun = PR_FALSE;
++    if (name && *name == BLAPI_FIPS_RERUN_FLAG) {
++        name++;
++        rerun = PR_TRUE;
++    }
++    return blapi_SHVerify(name, addr, PR_FALSE, rerun);
+ }
+ 
+ PRBool
+ BLAPI_SHVerifyFile(const char *shName)
+ {
+-    return blapi_SHVerifyFile(shName, PR_FALSE);
++    PRBool rerun = PR_FALSE;
++    if (shName && *shName == BLAPI_FIPS_RERUN_FLAG) {
++        shName++;
++        rerun = PR_TRUE;
++    }
++    return blapi_SHVerifyFile(shName, PR_FALSE, rerun);
+ }
+ 
+ static PRBool
+-blapi_SHVerifyFile(const char *shName, PRBool self)
++blapi_SHVerifyFile(const char *shName, PRBool self, PRBool rerun)
+ {
+     char *checkName = NULL;
+     PRFileDesc *checkFD = NULL;
+     PRFileDesc *shFD = NULL;
+     void *hashcx = NULL;
+     const SECHashObject *hashObj = NULL;
+     SECItem signature = { 0, NULL, 0 };
+     SECItem hash;
+@@ -346,17 +356,17 @@ blapi_SHVerifyFile(const char *shName, P
+     unsigned char hashBuf[HASH_LENGTH_MAX];
+ 
+     PORT_Memset(&key, 0, sizeof(key));
+     hash.data = hashBuf;
+     hash.len = sizeof(hashBuf);
+ 
+     /* If our integrity check was never ran or failed, fail any other
+      * integrity checks to prevent any token going into FIPS mode. */
+-    if (!self && (BL_FIPSEntryOK(PR_FALSE) != SECSuccess)) {
++    if (!self && (BL_FIPSEntryOK(PR_FALSE, rerun) != SECSuccess)) {
+         return PR_FALSE;
+     }
+ 
+     if (!shName) {
+         goto loser;
+     }
+ 
+     /* figure out the name of our check file */
+@@ -536,17 +546,17 @@ BLAPI_VerifySelf(const char *name)
+ {
+     if (name == NULL) {
+         /*
+          * If name is NULL, freebl is statically linked into softoken.
+          * softoken will call BLAPI_SHVerify next to verify itself.
+          */
+         return PR_TRUE;
+     }
+-    return blapi_SHVerify(name, (PRFuncPtr)decodeInt, PR_TRUE);
++    return blapi_SHVerify(name, (PRFuncPtr)decodeInt, PR_TRUE, PR_FALSE);
+ }
+ 
+ #else /* NSS_FIPS_DISABLED */
+ 
+ PRBool
+ BLAPI_SHVerifyFile(const char *shName)
+ {
+     return PR_FALSE;
+diff --git a/lib/softoken/fipstest.c b/lib/softoken/fipstest.c
+--- a/lib/softoken/fipstest.c
++++ b/lib/softoken/fipstest.c
+@@ -684,22 +684,25 @@ sftk_fips_HKDF_PowerUpSelfTest(void)
+ 
+ static PRBool sftk_self_tests_ran = PR_FALSE;
+ static PRBool sftk_self_tests_success = PR_FALSE;
+ 
+ /*
+  * This function is called at dll load time, the code tha makes this
+  * happen is platform specific on defined above.
+  */
+-static void
+-sftk_startup_tests(void)
++void sftk_startup_tests_with_rerun(PRBool rerun)
+ {
+     SECStatus rv;
+-    const char *libraryName = SOFTOKEN_LIB_NAME;
+-
++    /*const char *nlibraryName = SOFTOKEN_LIB_NAME;
++    const char *rlibraryName = BLAPI_FIPS_RERUN_FLAG_STRING SOFTOKEN_LIB_NAME; */
++    const char *libraryName = rerun ?
++               BLAPI_FIPS_RERUN_FLAG_STRING SOFTOKEN_LIB_NAME :
++               SOFTOKEN_LIB_NAME;
++    
+     PORT_Assert(!sftk_self_tests_ran);
+     PORT_Assert(!sftk_self_tests_success);
+     sftk_self_tests_ran = PR_TRUE;
+     sftk_self_tests_success = PR_FALSE; /* just in case */
+ 
+     /* need to initiallize the oid library before the RSA tests */
+     rv = SECOID_Init();
+     if (rv != SECSuccess) {
+@@ -746,35 +749,46 @@ sftk_startup_tests(void)
+     rv = sftk_fips_pbkdf_PowerUpSelfTests();
+     if (rv != SECSuccess) {
+         return;
+     }
+ 
+     sftk_self_tests_success = PR_TRUE;
+ }
+ 
++static void
++sftk_startup_tests(void)
++{
++    sftk_startup_tests_with_rerun(PR_FALSE);
++}
++
+ /*
+  * this is called from nsc_Common_Initizialize entry points that gates access
+  * to * all other pkcs11 functions. This prevents softoken operation if our
+  * power on selftest failed.
+  */
+ CK_RV
+-sftk_FIPSEntryOK()
++sftk_FIPSEntryOK(PRBool rerun)
+ {
+ #ifdef NSS_NO_INIT_SUPPORT
+     /* this should only be set on platforms that can't handle one of the INIT
+      * schemes.  This code allows those platforms to continue to function,
+      * though they don't meet the strict NIST requirements. If NSS_NO_INIT_SUPPORT
+      * is not set, and init support has not been properly enabled, softken
+      * will always fail because of the test below
+      */
+     if (!sftk_self_tests_ran) {
+         sftk_startup_tests();
+     }
+ #endif
++    if (rerun) {
++        sftk_self_tests_ran = PR_FALSE;
++        sftk_self_tests_success = PR_FALSE;
++        sftk_startup_tests_with_rerun(PR_TRUE);
++    }
+     if (!sftk_self_tests_success) {
+         return CKR_DEVICE_ERROR;
+     }
+     return CKR_OK;
+ }
+ #else
+ #include "pkcs11t.h"
+ CK_RV
+diff --git a/lib/softoken/fipstokn.c b/lib/softoken/fipstokn.c
+--- a/lib/softoken/fipstokn.c
++++ b/lib/softoken/fipstokn.c
+@@ -524,25 +524,32 @@ fc_log_init_error(CK_RV crv)
+ }
+ 
+ /* FC_Initialize initializes the PKCS #11 library. */
+ CK_RV
+ FC_Initialize(CK_VOID_PTR pReserved)
+ {
+     const char *envp;
+     CK_RV crv;
++    PRBool rerun;
+ 
+     if ((envp = PR_GetEnv("NSS_ENABLE_AUDIT")) != NULL) {
+         sftk_audit_enabled = (atoi(envp) == 1);
+     }
+ 
++    /* if we have the forcePOST flag on, rerun the integrity checks */
++    /* we need to know this before we fully parse the arguments in
++     * nsc_CommonInitialize, so read it now */
++    rerun = sftk_RawArgHasFlag("flags", "forcePost", pReserved);
++
+     /* At this point we should have already done post and integrity checks.
+      * if we haven't, it probably means the FIPS product has not been installed
+-     * or the tests failed. Don't let an application try to enter FIPS mode */
+-    crv = sftk_FIPSEntryOK();
++     * or the tests failed. Don't let an application try to enter FIPS mode. This
++     * also forces the tests to be rerun if forcePOST is set. */
++    crv = sftk_FIPSEntryOK(rerun);
+     if (crv != CKR_OK) {
+         sftk_fatalError = PR_TRUE;
+         fc_log_init_error(crv);
+         return crv;
+     }
+ 
+     sftk_ForkReset(pReserved, &crv);
+ 
+diff --git a/lib/softoken/pkcs11i.h b/lib/softoken/pkcs11i.h
+--- a/lib/softoken/pkcs11i.h
++++ b/lib/softoken/pkcs11i.h
+@@ -869,16 +869,17 @@ extern CK_RV sftk_MechAllowsOperation(CK
+  * acquiring a reference to the keydb from the slot */
+ NSSLOWKEYPrivateKey *sftk_FindKeyByPublicKey(SFTKSlot *slot, SECItem *dbKey);
+ 
+ /*
+  * parameter parsing functions
+  */
+ CK_RV sftk_parseParameters(char *param, sftk_parameters *parsed, PRBool isFIPS);
+ void sftk_freeParams(sftk_parameters *params);
++PRBool sftk_RawArgHasFlag(const char *entry, const char *flag, const void *pReserved);
+ 
+ /*
+  * narrow objects
+  */
+ SFTKSessionObject *sftk_narrowToSessionObject(SFTKObject *);
+ SFTKTokenObject *sftk_narrowToTokenObject(SFTKObject *);
+ 
+ /*
+diff --git a/lib/softoken/sftkpars.c b/lib/softoken/sftkpars.c
+--- a/lib/softoken/sftkpars.c
++++ b/lib/softoken/sftkpars.c
+@@ -244,8 +244,21 @@ sftk_freeParams(sftk_parameters *params)
+     FREE_CLEAR(params->configdir);
+     FREE_CLEAR(params->secmodName);
+     FREE_CLEAR(params->man);
+     FREE_CLEAR(params->libdes);
+     FREE_CLEAR(params->tokens);
+     FREE_CLEAR(params->updatedir);
+     FREE_CLEAR(params->updateID);
+ }
++
++PRBool
++sftk_RawArgHasFlag(const char *entry, const char *flag, const void *pReserved)
++{
++    CK_C_INITIALIZE_ARGS *init_args = (CK_C_INITIALIZE_ARGS *)pReserved;
++
++    /* if we don't have any params, the flag isn't set */
++    if ((!init_args || !init_args->LibraryParameters)) {
++        return PR_FALSE;
++    }
++
++    return NSSUTIL_ArgHasFlag(entry, flag, (const char *)init_args->LibraryParameters);
++}
+diff --git a/lib/softoken/softoken.h b/lib/softoken/softoken.h
+--- a/lib/softoken/softoken.h
++++ b/lib/softoken/softoken.h
+@@ -52,17 +52,17 @@ extern unsigned char *CBC_PadBuffer(PLAr
+                                     unsigned int inlen, unsigned int *outlen,
+                                     int blockSize);
+ 
+ /****************************************/
+ /*
+ ** Power-Up selftests are required for FIPS.
+ */
+ /* make sure Power-up selftests have been run. */
+-extern CK_RV sftk_FIPSEntryOK(void);
++extern CK_RV sftk_FIPSEntryOK(PRBool rerun);
+ 
+ /*
+ ** make known fixed PKCS #11 key types to their sizes in bytes
+ */
+ unsigned long sftk_MapKeySize(CK_KEY_TYPE keyType);
+ 
+ /*
+ ** FIPS 140-2 auditing

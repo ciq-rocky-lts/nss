@@ -1,8 +1,12 @@
 diff --git a/lib/freebl/mpi/mpi-priv.h b/lib/freebl/mpi/mpi-priv.h
-index 9447a81..3f5bf45 100644
 --- a/lib/freebl/mpi/mpi-priv.h
 +++ b/lib/freebl/mpi/mpi-priv.h
-@@ -204,6 +204,9 @@ void MPI_ASM_DECL s_mpv_mul_d_add(const mp_digit *a, mp_size a_len,
+@@ -199,16 +199,19 @@ void MPI_ASM_DECL s_mpv_mul_d(const mp_d
+ void MPI_ASM_DECL s_mpv_mul_d_add(const mp_digit *a, mp_size a_len,
+                                   mp_digit b, mp_digit *c);
+ 
+ #endif
+ 
  void MPI_ASM_DECL s_mpv_mul_d_add_prop(const mp_digit *a,
                                         mp_size a_len, mp_digit b,
                                         mp_digit *c);
@@ -12,21 +16,39 @@ index 9447a81..3f5bf45 100644
  void MPI_ASM_DECL s_mpv_sqr_add_prop(const mp_digit *a,
                                       mp_size a_len,
                                       mp_digit *sqrs);
+ 
+ mp_err MPI_ASM_DECL s_mpv_div_2dx1d(mp_digit Nhi, mp_digit Nlo,
+                                     mp_digit divisor, mp_digit *quot, mp_digit *rem);
+ 
+ /* c += a * b * (MP_RADIX ** offset);  */
 diff --git a/lib/freebl/mpi/mpi.c b/lib/freebl/mpi/mpi.c
-index 1d30669..1c3ba64 100644
 --- a/lib/freebl/mpi/mpi.c
 +++ b/lib/freebl/mpi/mpi.c
-@@ -9,6 +9,9 @@
+@@ -5,16 +5,18 @@
+  *
+  * This Source Code Form is subject to the terms of the Mozilla Public
+  * License, v. 2.0. If a copy of the MPL was not distributed with this
+  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
  
  #include "mpi-priv.h"
  #include "mplogic.h"
-+
+ 
 +#include <assert.h>
 +
- #if defined(OSF1)
- #include <c_asm.h>
+ #if defined(__arm__) && \
+     ((defined(__thumb__) && !defined(__thumb2__)) || defined(__ARM_ARCH_3__))
+ /* 16-bit thumb or ARM v3 doesn't work inlined assember version */
+ #undef MP_ASSEMBLY_MULTIPLY
+ #undef MP_ASSEMBLY_SQUARE
  #endif
-@@ -805,15 +808,18 @@ CLEANUP:
+ 
+ #if MP_LOGTAB
+@@ -797,25 +799,28 @@ mp_sub(const mp_int *a, const mp_int *b,
+ 
+ CLEANUP:
+     return res;
+ 
+ } /* end mp_sub() */
  
  /* }}} */
  
@@ -35,9 +57,10 @@ index 1d30669..1c3ba64 100644
  
  /*
 -  mp_mul(a, b, c)
-+  s_mp_mulg(a, b, c)
- 
+-
 -  Compute c = a * b.  All parameters may be identical.
++  s_mp_mulg(a, b, c)
++
 +  Compute c = a * b.  All parameters may be identical. if constantTime is set,
 +  then the operations are done in constant time. The original is mostly
 +  constant time as long as s_mpv_mul_d_add() is constant time. This is true
@@ -49,7 +72,17 @@ index 1d30669..1c3ba64 100644
  {
      mp_digit *pb;
      mp_int tmp;
-@@ -849,7 +855,14 @@ mp_mul(const mp_int *a, const mp_int *b, mp_int *c)
+     mp_err res;
+     mp_size ib;
+     mp_size useda, usedb;
+ 
+     ARGCHK(a != NULL && b != NULL && c != NULL, MP_BADARG);
+@@ -841,17 +846,24 @@ mp_mul(const mp_int *a, const mp_int *b,
+     }
+ 
+     MP_USED(c) = 1;
+     MP_DIGIT(c, 0) = 0;
+     if ((res = s_mp_pad(c, USED(a) + USED(b))) != MP_OKAY)
          goto CLEANUP;
  
  #ifdef NSS_USE_COMBA
@@ -65,7 +98,17 @@ index 1d30669..1c3ba64 100644
          if (MP_USED(a) == 4) {
              s_mp_mul_comba_4(a, b, c);
              goto CLEANUP;
-@@ -879,13 +892,15 @@ mp_mul(const mp_int *a, const mp_int *b, mp_int *c)
+         }
+         if (MP_USED(a) == 8) {
+             s_mp_mul_comba_8(a, b, c);
+             goto CLEANUP;
+         }
+@@ -871,36 +883,82 @@ mp_mul(const mp_int *a, const mp_int *b,
+ 
+     /* Outer loop:  Digits of b */
+     useda = MP_USED(a);
+     usedb = MP_USED(b);
+     for (ib = 1; ib < usedb; ib++) {
          mp_digit b_i = *pb++;
  
          /* Inner product:  Digits of a */
@@ -83,11 +126,12 @@ index 1d30669..1c3ba64 100644
  
      if (SIGN(a) == SIGN(b) || s_mp_cmp_d(c, 0) == MP_EQ)
          SIGN(c) = ZPOS;
-@@ -895,7 +910,51 @@ mp_mul(const mp_int *a, const mp_int *b, mp_int *c)
+     else
+         SIGN(c) = NEG;
+ 
  CLEANUP:
      mp_clear(&tmp);
      return res;
--} /* end mp_mul() */
 +} /* end smp_mulg() */
 +
 +/* }}} */
@@ -104,10 +148,10 @@ index 1d30669..1c3ba64 100644
 +mp_mul(const mp_int *a, const mp_int *b, mp_int *c)
 +{
 +    return s_mp_mulg(a, b, c, 0);
-+}
-+
-+/* }}} */
-+
+ } /* end mp_mul() */
+ 
+ /* }}} */
+ 
 +/* {{{ mp_mulCT(a, b, c) */
 +
 +/*
@@ -132,11 +176,24 @@ index 1d30669..1c3ba64 100644
 +    MP_CHECKOK(s_mp_mulg(a, b, c, 1));
 +CLEANUP:
 +    return res;
-+}  /* end mp_mulCT() */
++} /* end mp_mulCT() */
++
++/* }}} */
++
+ /* {{{ mp_sqr(a, sqr) */
  
- /* }}} */
+ #if MP_SQUARE
+ /*
+   Computes the square of a.  This can be done more
+   efficiently than a general multiplication, because many of the
+   computation steps are redundant when squaring.  The inner product
+   step is a bit more complicated, but we save a fair number of
+@@ -1263,16 +1321,174 @@ mp_mod(const mp_int *a, const mp_int *m,
+     }
  
-@@ -1271,6 +1330,164 @@ mp_mod(const mp_int *a, const mp_int *m, mp_int *c)
+     return MP_OKAY;
+ 
+ } /* end mp_mod() */
  
  /* }}} */
  
@@ -301,7 +358,17 @@ index 1d30669..1c3ba64 100644
  /* {{{ mp_mod_d(a, d, c) */
  
  /*
-@@ -1337,6 +1554,37 @@ mp_addmod(const mp_int *a, const mp_int *b, const mp_int *m, mp_int *c)
+   mp_mod_d(a, d, c)
+ 
+   Compute c = a (mod d).  Result will always be 0 <= c < d
+  */
+ mp_err
+@@ -1379,16 +1595,47 @@ mp_mulmod(const mp_int *a, const mp_int 
+     if ((res = mp_mod(c, m, c)) != MP_OKAY)
+         return res;
+ 
+     return MP_OKAY;
+ }
  
  /* }}} */
  
@@ -336,10 +403,20 @@ index 1d30669..1c3ba64 100644
 +
 +/* }}} */
 +
- /* {{{ mp_submod(a, b, m, c) */
+ /* {{{ mp_sqrmod(a, m, c) */
  
- /*
-@@ -3946,15 +4194,63 @@ s_mp_mul(mp_int *a, const mp_int *b)
+ #if MP_SQUARE
+ mp_err
+ mp_sqrmod(const mp_int *a, const mp_int *m, mp_int *c)
+ {
+     mp_err res;
+ 
+@@ -3936,25 +4183,73 @@ s_mp_mul(mp_int *a, const mp_int *b)
+     {                                                              \
+         mp_digit a0b1, a1b0;                                       \
+         Plo = (a & MP_HALF_DIGIT_MAX) * (b & MP_HALF_DIGIT_MAX);   \
+         Phi = (a >> MP_HALF_DIGIT_BIT) * (b >> MP_HALF_DIGIT_BIT); \
+         a0b1 = (a & MP_HALF_DIGIT_MAX) * (b >> MP_HALF_DIGIT_BIT); \
          a1b0 = (a >> MP_HALF_DIGIT_BIT) * (b & MP_HALF_DIGIT_MAX); \
          a1b0 += a0b1;                                              \
          Phi += a1b0 >> MP_HALF_DIGIT_BIT;                          \
@@ -407,7 +484,17 @@ index 1d30669..1c3ba64 100644
  #if !defined(MP_ASSEMBLY_MULTIPLY)
  /* c = a * b */
  void
-@@ -3979,8 +4275,7 @@ s_mpv_mul_d(const mp_digit *a, mp_size a_len, mp_digit b, mp_digit *c)
+ s_mpv_mul_d(const mp_digit *a, mp_size a_len, mp_digit b, mp_digit *c)
+ {
+ #if !defined(MP_NO_MP_WORD) && !defined(MP_NO_MUL_WORD)
+     mp_digit d = 0;
+ 
+@@ -3969,18 +4264,17 @@ s_mpv_mul_d(const mp_digit *a, mp_size a
+     mp_digit carry = 0;
+     while (a_len--) {
+         mp_digit a_i = *a++;
+         mp_digit a0b0, a1b1;
+ 
          MP_MUL_DxD(a_i, b, a1b1, a0b0);
  
          a0b0 += carry;
@@ -417,7 +504,17 @@ index 1d30669..1c3ba64 100644
          *c++ = a0b0;
          carry = a1b1;
      }
-@@ -4012,11 +4307,9 @@ s_mpv_mul_d_add(const mp_digit *a, mp_size a_len, mp_digit b,
+     *c = carry;
+ #endif
+ }
+ 
+ /* c += a * b */
+@@ -4002,21 +4296,19 @@ s_mpv_mul_d_add(const mp_digit *a, mp_si
+     mp_digit carry = 0;
+     while (a_len--) {
+         mp_digit a_i = *a++;
+         mp_digit a0b0, a1b1;
+ 
          MP_MUL_DxD(a_i, b, a1b1, a0b0);
  
          a0b0 += carry;
@@ -431,11 +528,20 @@ index 1d30669..1c3ba64 100644
          *c++ = a0b0;
          carry = a1b1;
      }
+     *c = carry;
+ #endif
+ }
+ 
+ /* Presently, this is only used by the Montgomery arithmetic code. */
 diff --git a/lib/freebl/mpi/mpi.h b/lib/freebl/mpi/mpi.h
-index b1a07a6..245501a 100644
 --- a/lib/freebl/mpi/mpi.h
 +++ b/lib/freebl/mpi/mpi.h
-@@ -150,6 +150,44 @@ typedef int mp_sword;
+@@ -145,16 +145,54 @@ typedef int mp_sword;
+ #define MP_USED(MP) ((MP)->used)
+ #define MP_ALLOC(MP) ((MP)->alloc)
+ #define MP_DIGITS(MP) ((MP)->dp)
+ #define MP_DIGIT(MP, N) (MP)->dp[(N)]
+ 
  /* This defines the maximum I/O base (minimum is 2)   */
  #define MP_MAX_RADIX 64
  
@@ -480,7 +586,17 @@ index b1a07a6..245501a 100644
  typedef struct {
      mp_sign sign;  /* sign of this quantity      */
      mp_size alloc; /* how many digits allocated  */
-@@ -190,7 +228,9 @@ mp_err mp_neg(const mp_int *a, mp_int *b);
+     mp_size used;  /* how many digits used       */
+     mp_digit *dp;  /* the digits themselves      */
+ } mp_int;
+ 
+ /* Default precision       */
+@@ -185,17 +223,19 @@ mp_err mp_expt_d(const mp_int *a, mp_dig
+ 
+ /* Sign manipulations      */
+ mp_err mp_abs(const mp_int *a, mp_int *b);
+ mp_err mp_neg(const mp_int *a, mp_int *b);
+ 
  /* Full arithmetic         */
  mp_err mp_add(const mp_int *a, const mp_int *b, mp_int *c);
  mp_err mp_sub(const mp_int *a, const mp_int *b, mp_int *c);
@@ -490,7 +606,17 @@ index b1a07a6..245501a 100644
  #if MP_SQUARE
  mp_err mp_sqr(const mp_int *a, mp_int *b);
  #else
-@@ -217,6 +257,12 @@ mp_err mp_exptmod(const mp_int *a, const mp_int *b, const mp_int *m, mp_int *c);
+ #define mp_sqr(a, b) mp_mul(a, a, b)
+ #endif
+ mp_err mp_div(const mp_int *a, const mp_int *b, mp_int *q, mp_int *r);
+ mp_err mp_div_2d(const mp_int *a, mp_digit d, mp_int *q, mp_int *r);
+ mp_err mp_expt(mp_int *a, mp_int *b, mp_int *c);
+@@ -212,23 +252,30 @@ mp_err mp_mulmod(const mp_int *a, const 
+ mp_err mp_sqrmod(const mp_int *a, const mp_int *m, mp_int *c);
+ #else
+ #define mp_sqrmod(a, m, c) mp_mulmod(a, a, m, c)
+ #endif
+ mp_err mp_exptmod(const mp_int *a, const mp_int *b, const mp_int *m, mp_int *c);
  mp_err mp_exptmod_d(const mp_int *a, mp_digit d, const mp_int *m, mp_int *c);
  #endif /* MP_MODARITH */
  
@@ -503,11 +629,28 @@ index b1a07a6..245501a 100644
  /* Comparisons             */
  int mp_cmp_z(const mp_int *a);
  int mp_cmp_d(const mp_int *a, mp_digit d);
-diff --git a/freebl/mpi/mpmontg.c b/lib/freebl/mpi/mpmontg.c
-index 79104f7..5600a90 100644
+ int mp_cmp(const mp_int *a, const mp_int *b);
+ int mp_cmp_mag(const mp_int *a, const mp_int *b);
+ int mp_isodd(const mp_int *a);
+ int mp_iseven(const mp_int *a);
++mp_err mp_selectCT(mp_digit cond, const mp_int *a, const mp_int *b, mp_int *ret);
+ 
+ /* Number theoretic        */
+ mp_err mp_gcd(mp_int *a, mp_int *b, mp_int *c);
+ mp_err mp_lcm(mp_int *a, mp_int *b, mp_int *c);
+ mp_err mp_xgcd(const mp_int *a, const mp_int *b, mp_int *g, mp_int *x, mp_int *y);
+ mp_err mp_invmod(const mp_int *a, const mp_int *m, mp_int *c);
+ mp_err mp_invmod_xgcd(const mp_int *a, const mp_int *m, mp_int *c);
+ 
+diff --git a/lib/freebl/mpi/mpmontg.c b/lib/freebl/mpi/mpmontg.c
 --- a/lib/freebl/mpi/mpmontg.c
 +++ b/lib/freebl/mpi/mpmontg.c
-@@ -129,20 +129,27 @@ CLEANUP:
+@@ -124,30 +124,37 @@ s_mp_mul_mont(const mp_int *a, const mp_
+     }
+     res = MP_OKAY;
+ 
+ CLEANUP:
+     return res;
  }
  #endif
  
@@ -540,7 +683,17 @@ index 79104f7..5600a90 100644
  #ifdef MP_USING_MONT_MULF
  
  /* the floating point multiply is already cache safe,
-@@ -198,7 +205,7 @@ mp_exptmod_f(const mp_int *montBase,
+  * don't turn on cache safe unless we specifically
+  * force it */
+ #ifndef MP_FORCE_CACHE_SAFE
+ #undef MP_USING_CACHE_SAFE_MOD_EXP
+ #endif
+@@ -193,17 +200,17 @@ mp_exptmod_f(const mp_int *montBase,
+     MP_DIGITS(&accum1) = 0;
+ 
+     for (i = 0; i < MAX_ODD_INTS; ++i)
+         oddPowers[i] = 0;
+ 
      MP_CHECKOK(mp_init_size(&accum1, 3 * nLen + 2));
  
      mp_set(&accum1, 1);
@@ -549,7 +702,17 @@ index 79104f7..5600a90 100644
      MP_CHECKOK(s_mp_pad(&accum1, nLen));
  
      oddPowSize = 2 * nLen + 1;
-@@ -478,7 +485,7 @@ mp_exptmod_i(const mp_int *montBase,
+     dTmpSize = 2 * oddPowSize;
+     dSize = sizeof(double) * (nLen * 4 + 1 +
+                               ((odd_ints + 1) * oddPowSize) + dTmpSize);
+     dBuf = malloc(dSize);
+     if (!dBuf) {
+@@ -473,17 +480,17 @@ mp_exptmod_i(const mp_int *montBase,
+     for (i = 1; i < odd_ints; ++i) {
+         MP_CHECKOK(mp_init_size(oddPowers + i, nLen + 2 * MP_USED(&power2) + 2));
+         MP_CHECKOK(mp_mul(oddPowers + (i - 1), &power2, oddPowers + i));
+         MP_CHECKOK(s_mp_redc(oddPowers + i, mmm));
+     }
  
      /* set accumulator to montgomery residue of 1 */
      mp_set(&accum1, 1);
@@ -558,7 +721,17 @@ index 79104f7..5600a90 100644
      pa1 = &accum1;
      pa2 = &accum2;
  
-@@ -865,7 +872,7 @@ mp_exptmod_safe_i(const mp_int *montBase,
+     for (expOff = bits_in_exponent - window_bits; expOff >= 0; expOff -= window_bits) {
+         mp_size smallExp;
+         MP_CHECKOK(mpl_get_bits(exponent, expOff, window_bits));
+         smallExp = (mp_size)res;
+ 
+@@ -862,17 +869,17 @@ mp_exptmod_safe_i(const mp_int *montBase
+     /* build the first WEAVE_WORD powers inline */
+     /* if WEAVE_WORD_SIZE is not 4, this code will have to change */
+     if (num_powers > 2) {
+         MP_CHECKOK(mp_init_size(&accum[0], 3 * nLen + 2));
+         MP_CHECKOK(mp_init_size(&accum[1], 3 * nLen + 2));
          MP_CHECKOK(mp_init_size(&accum[2], 3 * nLen + 2));
          MP_CHECKOK(mp_init_size(&accum[3], 3 * nLen + 2));
          mp_set(&accum[0], 1);
@@ -567,7 +740,17 @@ index 79104f7..5600a90 100644
          MP_CHECKOK(mp_copy(montBase, &accum[1]));
          SQR(montBase, &accum[2]);
          MUL_NOWEAVE(montBase, &accum[2], &accum[3]);
-@@ -884,7 +891,7 @@ mp_exptmod_safe_i(const mp_int *montBase,
+         powersArray = (mp_digit *)malloc(num_powers * (nLen * sizeof(mp_digit) + 1));
+         if (!powersArray) {
+             res = MP_MEM;
+             goto CLEANUP;
+         }
+@@ -881,17 +888,17 @@ mp_exptmod_safe_i(const mp_int *montBase
+         MP_CHECKOK(mpi_to_weave(accum, powers, nLen, num_powers));
+         if (first_window < 4) {
+             MP_CHECKOK(mp_copy(&accum[first_window], &accum1));
+             first_window = num_powers;
+         }
      } else {
          if (first_window == 0) {
              mp_set(&accum1, 1);
@@ -576,20 +759,42 @@ index 79104f7..5600a90 100644
          } else {
              /* assert first_window == 1? */
              MP_CHECKOK(mp_copy(montBase, &accum1));
-@@ -1057,7 +1064,7 @@ mp_exptmod(const mp_int *inBase, const mp_int *exponent,
+         }
+     }
+ 
+     /*
+      * calculate all the powers in the powers array.
+@@ -1054,19 +1061,19 @@ mp_exptmod(const mp_int *inBase, const m
+     nLen = MP_USED(modulus);
+     MP_CHECKOK(mp_init_size(&montBase, 2 * nLen + 2));
+ 
+     mmm.N = *modulus; /* a copy of the mp_int struct */
+ 
+     /* compute n0', given n0, n0' = -(n0 ** -1) mod MP_RADIX
+     **        where n0 = least significant mp_digit of N, the modulus.
      */
-     mmm.n0prime = 0 - s_mp_invmod_radix(MP_DIGIT(modulus, 0));
+-    mmm.n0prime = 0 - s_mp_invmod_radix(MP_DIGIT(modulus, 0));
++    mmm.n0prime = mp_calculate_mont_n0i(modulus);
  
 -    MP_CHECKOK(s_mp_to_mont(base, &mmm, &montBase));
 +    MP_CHECKOK(mp_to_mont(base, modulus, &montBase));
  
      bits_in_exponent = mpl_significant_bits(exponent);
  #ifdef MP_USING_CACHE_SAFE_MOD_EXP
+     if (mp_using_cache_safe_exp) {
+         if (bits_in_exponent > 780)
+             window_bits = 6;
+         else if (bits_in_exponent > 256)
+             window_bits = 5;
 diff --git a/lib/freebl/rsa.c b/lib/freebl/rsa.c
-index 89bdd68..23710bf 100644
 --- a/lib/freebl/rsa.c
 +++ b/lib/freebl/rsa.c
-@@ -64,6 +64,8 @@ struct RSABlindingParamsStr {
+@@ -65,16 +65,18 @@ struct blindingParamsStr {
+ ** the Handbook of Applied Cryptography, 11.118-11.119.
+ */
+ struct RSABlindingParamsStr {
+     /* Blinding-specific parameters */
+     PRCList link;              /* link to list of structs            */
      SECItem modulus;           /* list element "key"                 */
      blindingParams *free, *bp; /* Blinding parameters queue          */
      blindingParams array[RSA_BLINDING_PARAMS_MAX_CACHE_SIZE];
@@ -598,7 +803,17 @@ index 89bdd68..23710bf 100644
  };
  typedef struct RSABlindingParamsStr RSABlindingParams;
  
-@@ -1146,6 +1148,8 @@ generate_blinding_params(RSAPrivateKey *key, mp_int *f, mp_int *g, mp_int *n,
+ /*
+ ** RSABlindingParamsListStr
+ **
+ ** List of key-specific blinding params.  The arena holds the volatile pool
+ ** of memory for each entry and the list itself.  The lock is for list
+@@ -1210,16 +1212,18 @@ generate_blinding_params(RSAPrivateKey *
+     CHECK_SEC_OK(RNG_GenerateGlobalRandomBytes(kb, modLen));
+     CHECK_MPI_OK(mp_read_unsigned_octets(&k, kb, modLen));
+     /* k < n */
+     CHECK_MPI_OK(mp_mod(&k, n, &k));
+     /* f = k**e mod n */
      CHECK_MPI_OK(mp_exptmod(&k, &e, n, f));
      /* g = k**-1 mod n */
      CHECK_MPI_OK(mp_invmod(&k, n, g));
@@ -607,7 +822,17 @@ index 89bdd68..23710bf 100644
  cleanup:
      if (kb)
          PORT_ZFree(kb, modLen);
-@@ -1182,13 +1186,16 @@ init_blinding_params(RSABlindingParams *rsabp, RSAPrivateKey *key,
+     mp_clear(&k);
+     mp_clear(&e);
+     if (err) {
+         MP_TO_SEC_ERROR(err);
+         rv = SECFailure;
+@@ -1246,23 +1250,26 @@ init_blinding_params(RSABlindingParams *
+      * of rsabp->array pointer and must be set to NULL
+      */
+     rsabp->array[RSA_BLINDING_PARAMS_MAX_CACHE_SIZE - 1].next = NULL;
+ 
+     bp = rsabp->array;
      rsabp->bp = NULL;
      rsabp->free = bp;
  
@@ -625,15 +850,35 @@ index 89bdd68..23710bf 100644
  {
      RSABlindingParams *rsabp = NULL;
      blindingParams *bpUnlinked = NULL;
-@@ -1248,6 +1255,7 @@ get_blinding_params(RSAPrivateKey *key, mp_int *n, unsigned int modLen,
+     blindingParams *bp;
+     PRCList *el;
+     SECStatus rv = SECSuccess;
+     mp_err err = MP_OKAY;
+     int cmp = -1;
+@@ -1312,16 +1319,17 @@ get_blinding_params(RSAPrivateKey *key, 
+             ** head (since el would have looped back to the head).
+             */
+             PR_INSERT_BEFORE(&rsabp->link, el);
+         }
+ 
          /* We've found (or created) the RSAblindingParams struct for this key.
           * Now, search its list of ready blinding params for a usable one.
           */
 +        *n0i = rsabp->n0i;
          while (0 != (bp = rsabp->bp)) {
- #ifndef UNSAFE_FUZZER_MODE
-             if (--(bp->counter) > 0)
-@@ -1355,6 +1363,7 @@ cleanup:
+ #ifdef UNSAFE_FUZZER_MODE
+             /* Found a match and there are still remaining uses left */
+             /* Return the parameters */
+             CHECK_MPI_OK(mp_copy(&bp->f, f));
+             CHECK_MPI_OK(mp_copy(&bp->g, g));
+ 
+             PZ_Unlock(blindingParamsList.lock);
+@@ -1426,16 +1434,17 @@ cleanup:
+         rsabp->free = bp;
+     }
+     if (holdingLock) {
+         PZ_Unlock(blindingParamsList.lock);
+     }
      if (err) {
          MP_TO_SEC_ERROR(err);
      }
@@ -641,7 +886,17 @@ index 89bdd68..23710bf 100644
      return SECFailure;
  }
  
-@@ -1374,6 +1383,7 @@ rsa_PrivateKeyOp(RSAPrivateKey *key,
+ /*
+ ** Perform a raw private-key operation
+ **  Length of input and output buffers are equal to key's modulus len.
+ */
+ static SECStatus
+@@ -1445,16 +1454,17 @@ rsa_PrivateKeyOp(RSAPrivateKey *key,
+                  PRBool check)
+ {
+     unsigned int modLen;
+     unsigned int offset;
+     SECStatus rv = SECSuccess;
      mp_err err;
      mp_int n, c, m;
      mp_int f, g;
@@ -649,7 +904,17 @@ index 89bdd68..23710bf 100644
      if (!key || !output || !input) {
          PORT_SetError(SEC_ERROR_INVALID_ARGS);
          return SECFailure;
-@@ -1401,7 +1411,7 @@ rsa_PrivateKeyOp(RSAPrivateKey *key,
+     }
+     /* check input out of range (needs to be in range [0..n-1]) */
+     modLen = rsa_modulusLen(&key->modulus);
+     if (modLen == 0) {
+         PORT_SetError(SEC_ERROR_INVALID_ARGS);
+@@ -1476,17 +1486,17 @@ rsa_PrivateKeyOp(RSAPrivateKey *key,
+     CHECK_MPI_OK(mp_init(&f));
+     CHECK_MPI_OK(mp_init(&g));
+     SECITEM_TO_MPINT(key->modulus, &n);
+     OCTETS_TO_MPINT(input, &c, modLen);
+     /* If blinding, compute pre-image of ciphertext by multiplying by
      ** blinding factor
      */
      if (nssRSAUseBlinding) {
@@ -658,7 +923,17 @@ index 89bdd68..23710bf 100644
          /* c' = c*f mod n */
          CHECK_MPI_OK(mp_mulmod(&c, &f, &n, &c));
      }
-@@ -1422,7 +1432,7 @@ rsa_PrivateKeyOp(RSAPrivateKey *key,
+     /* Do the private key operation m = c**d mod n */
+     if (key->prime1.len == 0 ||
+         key->prime2.len == 0 ||
+         key->exponent1.len == 0 ||
+         key->exponent2.len == 0 ||
+@@ -1497,17 +1507,17 @@ rsa_PrivateKeyOp(RSAPrivateKey *key,
+     } else {
+         CHECK_SEC_OK(rsa_PrivateKeyOpCRTNoCheck(key, &m, &c));
+     }
+     /* If blinding, compute post-image of plaintext by multiplying by
+     ** blinding factor
      */
      if (nssRSAUseBlinding) {
          /* m = m'*g mod n */
@@ -667,3 +942,8 @@ index 89bdd68..23710bf 100644
      }
      err = mp_to_fixlen_octets(&m, output, modLen);
      if (err >= 0)
+         err = MP_OKAY;
+ cleanup:
+     mp_clear(&n);
+     mp_clear(&c);
+     mp_clear(&m);

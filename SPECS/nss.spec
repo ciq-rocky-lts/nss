@@ -1,7 +1,7 @@
-%global nspr_build_version 4.34.0-3
-%global nspr_release -3
-%global nspr_version 4.34.0
-%global nss_version 3.79.0
+%global nspr_build_version 4.35.0-1
+%global nspr_release -1
+%global nspr_version 4.35.0
+%global nss_version 3.90.0
 %global unsupported_tools_directory %{_libdir}/nss/unsupported-tools
 %global saved_files_dir %{_libdir}/nss/saved
 %global dracutlibdir %{_prefix}/lib/dracut
@@ -63,7 +63,7 @@ print(string.sub(hash, 0, 16))
 Summary:          Network Security Services
 Name:             nss
 Version:          %{nss_version}
-Release:          12%{?dist}
+Release:          4%{?dist}
 License:          MPLv2.0
 URL:              http://www.mozilla.org/projects/security/pki/nss/
 Requires:         nspr >= %{nspr_version}%{nspr_release}
@@ -109,6 +109,9 @@ Source25:         key3.db.xml
 Source26:         key4.db.xml
 Source27:         secmod.db.xml
 Source28:         nss-p11-kit.config
+# fips algorithms are tied to the red hat validation, others
+# will have their own validation
+Source30:         fips_algorithms.h
 
 Source50:         NameConstraints_Certs.tar
 
@@ -131,7 +134,7 @@ Patch4:           iquote.patch
 Patch9:		  nss-sysinit-userdb.patch
 # Disable nss-sysinit test which is solely to test the above change
 Patch10:	  nss-skip-sysinit-gtests.patch
-
+Patch15:          nss-3.90-extend-db-dump-time.patch
 # For compatibility reasons, we stick with the old PKCS #11 2.40
 # definition of CK_GCM_PARAMS:
 %if 0%{?fedora} < 34
@@ -157,23 +160,27 @@ Patch50:          nss-3.66-restore-old-pkcs12-default.patch
 Patch51:          nss-3.79-revert-distrusted-certs.patch
 # Local Patch: update fipsdefaults to AES
 Patch52:          nss-3.79-pkcs12-fips-defaults.patch
+Patch53:          nss-3.71-camellia-pkcs12-doc.patch
+Patch54:          nss-3.90-disable-ech.patch
 
 # https://bugzilla.redhat.com/show_bug.cgi?id=1774659
-Patch60:          nss-3.79-dbtool.patch
-Patch61:          nss-3.79-dont-verify-default.patch
-# https://bugzilla.redhat.com/show_bug.cgi?id=1774654
-Patch63:          nss-3.79-fix-client-cert-crash.patch
-# https://bugzilla.redhat.com/show_bug.cgi?id=1767883
-Patch64:          nss-3.79-rhel-8-fips-signature-policy.patch
-Patch65:          nss-3.79-enable-POST-rerun.patch
-Patch66:          nss-3.79-increase-pbe-cache.patch
-Patch67:          nss-3.79-pkcs12-fix-null-password.patch
-Patch68:          nss-3.79-fips.patch
-# cve 2023-0767, remove on rebase to nss 3.88.1 or later
-# https://bugzilla.mozilla.org/show_bug.cgi?id=1804640
-Patch70:          cve-2023-0767.patch
+Patch57:          nss-3.79-dbtool.patch
+Patch58:          nss-3.79-fips.patch
+Patch61:          nss-3.79-fips-review.patches
+# https://bugzilla.mozilla.org/show_bug.cgi?id=1836781
+# https://bugzilla.mozilla.org/show_bug.cgi?id=1836925
+Patch62:          nss-3.90-DisablingASM.patch
+Patch63:          nss-3.90-no-dbm-25519.patch
+Patch64:          nss-3.90-pbkdf2-indicator.patch
+
+#ems policy. needs to upstream
+Patch70:          nss-3.90-add-ems-policy.patch
 
 Patch80:          blinding_ct.patch
+Patch81:          nss-3.90-fips-pkcs11-long-hash.patch
+Patch82:          nss-3.90-fips-safe-memset.patch
+Patch83:          nss-3.90-fips-indicators.patch
+Patch84:          nss-3.90-aes-gmc-indicator.patch
 
 %description
 Network Security Services (NSS) is a set of libraries designed to
@@ -305,6 +312,11 @@ Header and library files for doing development with Network Security Services.
 pushd nss
 %autopatch -p1 
 popd
+
+# copy the fips_algorithms.h for this release
+# this file is release specific and matches what
+# each vendors claim in their own FIPS certification
+cp %{SOURCE30} nss/lib/softoken/
 
 #update expired test certs
 pushd nss
@@ -960,11 +972,27 @@ update-crypto-policies --no-reload &> /dev/null || :
 
 
 %changelog
-* Mon Jan 15 2024 Matt Hink <mhink@ciq.com> - 3.79.0-12
+* Wed Dec 6 2023 Bob Relyea <rrelyea@redhat.com> - 3.90.0-4
+- FIPS review changes
+-   add PORT_SafeZero to avoid compiler optimizing a way zeroing memory.
+-   update the indicators for this release
+-   allow hashing of longer than int32 values in a single PKCS #11 call.
+
+* Tue Nov 21 2023 Bob Relyea <rrelyea@redhat.com> - 3.90.0-3.1
+- Fix expired certs in tests
 - Fix CVE-2023-5388
-- Fix expired test certs with NameConstraints_Certs.tar
-- Upstream patches: https://gitlab.com/redhat/centos-stream/rpms/nss/-/commit/b604fc6eb5bf895a2f80f70ccf86d05b76641580
-- And here: https://git.rockylinux.org/staging/rpms/nss/-/commit/1f7f7523b61a2ada2f461548c4160fbbf979c5dd
+
+* Thu Aug 3 2023 Bob Relyea <rrelyea@redhat.com> - 3.90.0-3
+- add indicators for pbkdf2
+- add camellia to pkcs12 doc files
+- fix ems policy bug
+- disable ech
+
+* Thu Jul 27 2023 Bob Relyea <rrelyea@redhat.com> - 3.90.0-2
+- fix the change log
+
+* Thu Jul 27 2023 Bob Relyea <rrelyea@redhat.com> - 3.90.0-1
+- rebase to NSS 3.90
 
 * Wed Mar 8 2023 Bob Relyea <rrelyea@redhat.com> - 3.79.0-11
 - Fix CVE-2023-0767

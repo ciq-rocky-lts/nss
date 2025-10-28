@@ -160,178 +160,19 @@ diff --git a/lib/softoken/config.mk b/lib/softoken/config.mk
 +DEFINES += -DNSS_FIPS_140_3
 +endif
 +
-diff --git a/lib/softoken/fips_algorithms.h b/lib/softoken/fips_algorithms.h
---- a/lib/softoken/fips_algorithms.h
-+++ b/lib/softoken/fips_algorithms.h
-@@ -49,33 +49,46 @@ SFTKFIPSAlgorithmList sftk_fips_mechs[] 
- #define CKF_KEK (CKF_WRAP | CKF_UNWRAP)
- #define CKF_KEA CKF_DERIVE
- #define CKF_KDF CKF_DERIVE
- #define CKF_HSH CKF_DIGEST
- #define CK_MAX 0xffffffffUL
- /* mechanisms using the same key types share the same key type
-  * limits */
- #define RSA_FB_KEY 2048, 4096 /* min, max */
--#define RSA_FB_STEP 1024
-+#define RSA_FB_STEP 1
-+#define RSA_LEGACY_FB_KEY 1024, 1792 /* min, max */
-+#define RSA_LEGACY_FB_STEP 256
-+
- #define DSA_FB_KEY 2048, 4096 /* min, max */
- #define DSA_FB_STEP 1024
- #define DH_FB_KEY 2048, 4096 /* min, max */
- #define DH_FB_STEP 1024
- #define EC_FB_KEY 256, 521 /* min, max */
- #define EC_FB_STEP 1       /* key limits handled by special operation */
- #define AES_FB_KEY 128, 256
- #define AES_FB_STEP 64
-     { CKM_RSA_PKCS_KEY_PAIR_GEN, { RSA_FB_KEY, CKF_KPG }, RSA_FB_STEP, SFTKFIPSNone },
-     { CKM_RSA_PKCS_PSS, { RSA_FB_KEY, CKF_SGN }, RSA_FB_STEP, SFTKFIPSNone },
-     { CKM_RSA_PKCS_OAEP, { RSA_FB_KEY, CKF_ENC }, RSA_FB_STEP, SFTKFIPSNone },
-+    { CKM_RSA_PKCS_PSS, { RSA_LEGACY_FB_KEY, CKF_VERIFY }, RSA_LEGACY_FB_STEP, SFTKFIPSNone },
-+
-     /* -------------- RSA Multipart Signing Operations -------------------- */
-     { CKM_SHA224_RSA_PKCS, { RSA_FB_KEY, CKF_SGN }, RSA_FB_STEP, SFTKFIPSNone },
-     { CKM_SHA256_RSA_PKCS, { RSA_FB_KEY, CKF_SGN }, RSA_FB_STEP, SFTKFIPSNone },
-     { CKM_SHA384_RSA_PKCS, { RSA_FB_KEY, CKF_SGN }, RSA_FB_STEP, SFTKFIPSNone },
-     { CKM_SHA512_RSA_PKCS, { RSA_FB_KEY, CKF_SGN }, RSA_FB_STEP, SFTKFIPSNone },
-+    { CKM_SHA224_RSA_PKCS, { RSA_LEGACY_FB_KEY, CKF_VERIFY }, RSA_LEGACY_FB_STEP, SFTKFIPSNone },
-+    { CKM_SHA256_RSA_PKCS, { RSA_LEGACY_FB_KEY, CKF_VERIFY }, RSA_LEGACY_FB_STEP, SFTKFIPSNone },
-+    { CKM_SHA384_RSA_PKCS, { RSA_LEGACY_FB_KEY, CKF_VERIFY }, RSA_LEGACY_FB_STEP, SFTKFIPSNone },
-+    { CKM_SHA512_RSA_PKCS, { RSA_LEGACY_FB_KEY, CKF_VERIFY }, RSA_LEGACY_FB_STEP, SFTKFIPSNone },
-+    { CKM_SHA224_RSA_PKCS_PSS, { RSA_LEGACY_FB_KEY, CKF_VERIFY }, RSA_LEGACY_FB_STEP, SFTKFIPSNone },
-+    { CKM_SHA256_RSA_PKCS_PSS, { RSA_LEGACY_FB_KEY, CKF_VERIFY }, RSA_LEGACY_FB_STEP, SFTKFIPSNone },
-+    { CKM_SHA384_RSA_PKCS_PSS, { RSA_LEGACY_FB_KEY, CKF_VERIFY }, RSA_LEGACY_FB_STEP, SFTKFIPSNone },
-+    { CKM_SHA512_RSA_PKCS_PSS, { RSA_LEGACY_FB_KEY, CKF_VERIFY }, RSA_LEGACY_FB_STEP, SFTKFIPSNone },
-     { CKM_SHA224_RSA_PKCS_PSS, { RSA_FB_KEY, CKF_SGN }, RSA_FB_STEP, SFTKFIPSNone },
-     { CKM_SHA256_RSA_PKCS_PSS, { RSA_FB_KEY, CKF_SGN }, RSA_FB_STEP, SFTKFIPSNone },
-     { CKM_SHA384_RSA_PKCS_PSS, { RSA_FB_KEY, CKF_SGN }, RSA_FB_STEP, SFTKFIPSNone },
-     { CKM_SHA512_RSA_PKCS_PSS, { RSA_FB_KEY, CKF_SGN }, RSA_FB_STEP, SFTKFIPSNone },
-     /* ------------------------- DSA Operations --------------------------- */
-     { CKM_DSA_KEY_PAIR_GEN, { DSA_FB_KEY, CKF_KPG }, DSA_FB_STEP, SFTKFIPSNone },
-     { CKM_DSA, { DSA_FB_KEY, CKF_SGN }, DSA_FB_STEP, SFTKFIPSNone },
-     { CKM_DSA_PARAMETER_GEN, { DSA_FB_KEY, CKF_KPG }, DSA_FB_STEP, SFTKFIPSNone },
-@@ -95,76 +108,73 @@ SFTKFIPSAlgorithmList sftk_fips_mechs[] 
-     { CKM_ECDSA_SHA256, { EC_FB_KEY, CKF_SGN }, EC_FB_STEP, SFTKFIPSECC },
-     { CKM_ECDSA_SHA384, { EC_FB_KEY, CKF_SGN }, EC_FB_STEP, SFTKFIPSECC },
-     { CKM_ECDSA_SHA512, { EC_FB_KEY, CKF_SGN }, EC_FB_STEP, SFTKFIPSECC },
-     /* ------------------------- RC2 Operations --------------------------- */
-     /* ------------------------- AES Operations --------------------------- */
-     { CKM_AES_KEY_GEN, { AES_FB_KEY, CKF_GEN }, AES_FB_STEP, SFTKFIPSNone },
-     { CKM_AES_ECB, { AES_FB_KEY, CKF_ENC }, AES_FB_STEP, SFTKFIPSNone },
-     { CKM_AES_CBC, { AES_FB_KEY, CKF_ENC }, AES_FB_STEP, SFTKFIPSNone },
--    { CKM_AES_MAC, { AES_FB_KEY, CKF_SGN }, AES_FB_STEP, SFTKFIPSNone },
--    { CKM_AES_MAC_GENERAL, { AES_FB_KEY, CKF_SGN }, AES_FB_STEP, SFTKFIPSNone },
-     { CKM_AES_CMAC, { AES_FB_KEY, CKF_SGN }, AES_FB_STEP, SFTKFIPSNone },
-     { CKM_AES_CMAC_GENERAL, { AES_FB_KEY, CKF_SGN }, AES_FB_STEP, SFTKFIPSNone },
-     { CKM_AES_CBC_PAD, { AES_FB_KEY, CKF_ENC }, AES_FB_STEP, SFTKFIPSNone },
-     { CKM_AES_CTS, { AES_FB_KEY, CKF_ENC }, AES_FB_STEP, SFTKFIPSNone },
-     { CKM_AES_CTR, { AES_FB_KEY, CKF_ENC }, AES_FB_STEP, SFTKFIPSNone },
-     { CKM_AES_GCM, { AES_FB_KEY, CKF_ENC }, AES_FB_STEP, SFTKFIPSAEAD },
-     { CKM_AES_KEY_WRAP, { AES_FB_KEY, CKF_ENC }, AES_FB_STEP, SFTKFIPSNone },
-     { CKM_AES_KEY_WRAP_PAD, { AES_FB_KEY, CKF_ENC }, AES_FB_STEP, SFTKFIPSNone },
-     { CKM_AES_KEY_WRAP_KWP, { AES_FB_KEY, CKF_ENC }, AES_FB_STEP, SFTKFIPSNone },
--    { CKM_AES_XCBC_MAC_96, { 96, 96, CKF_SGN }, 1, SFTKFIPSNone },
--    { CKM_AES_XCBC_MAC, { 128, 128, CKF_SGN }, 1, SFTKFIPSNone },
-     /* ------------------------- Hashing Operations ----------------------- */
-     { CKM_SHA224, { 0, 0, CKF_HSH }, 1, SFTKFIPSNone },
-     { CKM_SHA224_HMAC, { 112, 224, CKF_SGN }, 1, SFTKFIPSNone },
-     { CKM_SHA224_HMAC_GENERAL, { 112, 224, CKF_SGN }, 1, SFTKFIPSNone },
-     { CKM_SHA256, { 0, 0, CKF_HSH }, 1, SFTKFIPSNone },
--    { CKM_SHA256_HMAC, { 128, 256, CKF_SGN }, 1, SFTKFIPSNone },
--    { CKM_SHA256_HMAC_GENERAL, { 128, 256, CKF_SGN }, 1, SFTKFIPSNone },
-+    { CKM_SHA256_HMAC, { 112, 256, CKF_SGN }, 1, SFTKFIPSNone },
-+    { CKM_SHA256_HMAC_GENERAL, { 112, 256, CKF_SGN }, 1, SFTKFIPSNone },
-     { CKM_SHA384, { 0, 0, CKF_HSH }, 1, SFTKFIPSNone },
--    { CKM_SHA384_HMAC, { 192, 384, CKF_SGN }, 1, SFTKFIPSNone },
--    { CKM_SHA384_HMAC_GENERAL, { 192, 384, CKF_SGN }, 1, SFTKFIPSNone },
-+    { CKM_SHA384_HMAC, { 112, 384, CKF_SGN }, 1, SFTKFIPSNone },
-+    { CKM_SHA384_HMAC_GENERAL, { 112, 384, CKF_SGN }, 1, SFTKFIPSNone },
-     { CKM_SHA512, { 0, 0, CKF_HSH }, 1, SFTKFIPSNone },
--    { CKM_SHA512_HMAC, { 256, 512, CKF_SGN }, 1, SFTKFIPSNone },
--    { CKM_SHA512_HMAC_GENERAL, { 256, 512, CKF_SGN }, 1, SFTKFIPSNone },
-+    { CKM_SHA512_HMAC, { 112, 512, CKF_SGN }, 1, SFTKFIPSNone },
-+    { CKM_SHA512_HMAC_GENERAL, { 112, 512, CKF_SGN }, 1, SFTKFIPSNone },
-     /* --------------------- Secret Key Operations ------------------------ */
--    { CKM_GENERIC_SECRET_KEY_GEN, { 8, 256, CKF_GEN }, 1, SFTKFIPSNone },
-+    { CKM_GENERIC_SECRET_KEY_GEN, { 112, 256, CKF_GEN }, 1, SFTKFIPSNone },
-     /* ---------------------- SSL/TLS operations ------------------------- */
-     { CKM_SHA224_KEY_DERIVATION, { 112, 224, CKF_KDF }, 1, SFTKFIPSNone },
--    { CKM_SHA256_KEY_DERIVATION, { 128, 256, CKF_KDF }, 1, SFTKFIPSNone },
--    { CKM_SHA384_KEY_DERIVATION, { 192, 284, CKF_KDF }, 1, SFTKFIPSNone },
--    { CKM_SHA512_KEY_DERIVATION, { 256, 512, CKF_KDF }, 1, SFTKFIPSNone },
-+    { CKM_SHA256_KEY_DERIVATION, { 112, 256, CKF_KDF }, 1, SFTKFIPSNone },
-+    { CKM_SHA384_KEY_DERIVATION, { 112, 284, CKF_KDF }, 1, SFTKFIPSNone },
-+    { CKM_SHA512_KEY_DERIVATION, { 112, 512, CKF_KDF }, 1, SFTKFIPSNone },
-+    { CKM_SSL3_PRE_MASTER_KEY_GEN, { 384, 384, CKF_GEN }, 1, SFTKFIPSNone },
-     { CKM_TLS12_MASTER_KEY_DERIVE, { 384, 384, CKF_KDF }, 1, SFTKFIPSNone },
-     { CKM_TLS12_MASTER_KEY_DERIVE_DH, { DH_FB_KEY, CKF_KDF }, 1, SFTKFIPSNone },
-     { CKM_TLS12_KEY_AND_MAC_DERIVE, { 384, 384, CKF_KDF }, 1, SFTKFIPSNone },
--    { CKM_TLS_PRF_GENERAL, { 8, 512, CKF_SGN }, 1, SFTKFIPSNone },
--    { CKM_TLS_MAC, { 8, 512, CKF_SGN }, 1, SFTKFIPSNone },
-+    { CKM_TLS_PRF_GENERAL, { 112, 512, CKF_SGN }, 1, SFTKFIPSNone },
-+    { CKM_TLS_MAC, { 112, 512, CKF_SGN }, 1, SFTKFIPSNone },
-     /* sigh, is this algorithm really tested. ssl doesn't seem to have a
-      * way of turning the extension off */
-     { CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE, { 192, 1024, CKF_KDF }, 1, SFTKFIPSNone },
-     { CKM_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_DH, { 192, 1024, CKF_DERIVE }, 1, SFTKFIPSNone },
- 
-     /* ------------------------- HKDF Operations -------------------------- */
--    { CKM_HKDF_DERIVE, { 8, 255 * 64 * 8, CKF_KDF }, 1, SFTKFIPSNone },
--    { CKM_HKDF_DATA, { 8, 255 * 64 * 8, CKF_KDF }, 1, SFTKFIPSNone },
-+    { CKM_HKDF_DERIVE, { 112, 255 * 64 * 8, CKF_KDF }, 1, SFTKFIPSNone },
-+    { CKM_HKDF_DATA, { 112, 255 * 64 * 8, CKF_KDF }, 1, SFTKFIPSNone },
-     { CKM_HKDF_KEY_GEN, { 160, 224, CKF_GEN }, 1, SFTKFIPSNone },
-     { CKM_HKDF_KEY_GEN, { 256, 512, CKF_GEN }, 128, SFTKFIPSNone },
-     /* ------------------ NIST 800-108 Key Derivations  ------------------- */
--    { CKM_SP800_108_COUNTER_KDF, { 0, CK_MAX, CKF_KDF }, 1, SFTKFIPSNone },
--    { CKM_SP800_108_FEEDBACK_KDF, { 0, CK_MAX, CKF_KDF }, 1, SFTKFIPSNone },
--    { CKM_SP800_108_DOUBLE_PIPELINE_KDF, { 0, CK_MAX, CKF_KDF }, 1, SFTKFIPSNone },
--    { CKM_NSS_SP800_108_COUNTER_KDF_DERIVE_DATA, { 0, CK_MAX, CKF_KDF }, 1, SFTKFIPSNone },
--    { CKM_NSS_SP800_108_FEEDBACK_KDF_DERIVE_DATA, { 0, CK_MAX, CKF_KDF }, 1, SFTKFIPSNone },
--    { CKM_NSS_SP800_108_DOUBLE_PIPELINE_KDF_DERIVE_DATA, { 0, CK_MAX, CKF_KDF }, 1, SFTKFIPSNone },
-+    { CKM_SP800_108_COUNTER_KDF, { 112, CK_MAX, CKF_KDF }, 1, SFTKFIPSNone },
-+    { CKM_SP800_108_FEEDBACK_KDF, { 112, CK_MAX, CKF_KDF }, 1, SFTKFIPSNone },
-+    { CKM_SP800_108_DOUBLE_PIPELINE_KDF, { 112, CK_MAX, CKF_KDF }, 1, SFTKFIPSNone },
-+    { CKM_NSS_SP800_108_COUNTER_KDF_DERIVE_DATA, { 112, CK_MAX, CKF_KDF }, 1, SFTKFIPSNone },
-+    { CKM_NSS_SP800_108_FEEDBACK_KDF_DERIVE_DATA, { 112, CK_MAX, CKF_KDF }, 1, SFTKFIPSNone },
-+    { CKM_NSS_SP800_108_DOUBLE_PIPELINE_KDF_DERIVE_DATA, { 112, CK_MAX, CKF_KDF }, 1, SFTKFIPSNone },
-     /* --------------------IPSEC ----------------------- */
--    { CKM_NSS_IKE_PRF_PLUS_DERIVE, { 8, 255 * 64, CKF_KDF }, 1, SFTKFIPSNone },
--    { CKM_NSS_IKE_PRF_DERIVE, { 8, 64, CKF_KDF }, 1, SFTKFIPSNone },
--    { CKM_NSS_IKE1_PRF_DERIVE, { 8, 64, CKF_KDF }, 1, SFTKFIPSNone },
--    { CKM_NSS_IKE1_APP_B_PRF_DERIVE, { 8, 255 * 64, CKF_KDF }, 1, SFTKFIPSNone },
-+    { CKM_NSS_IKE_PRF_PLUS_DERIVE, { 112, 255 * 64, CKF_KDF }, 1, SFTKFIPSNone },
-+    { CKM_NSS_IKE_PRF_DERIVE, { 112, 64, CKF_KDF }, 1, SFTKFIPSNone },
-+    { CKM_NSS_IKE1_PRF_DERIVE, { 112, 64, CKF_KDF }, 1, SFTKFIPSNone },
-+    { CKM_NSS_IKE1_APP_B_PRF_DERIVE, { 112, 255 * 64, CKF_KDF }, 1, SFTKFIPSNone },
-     /* ------------------ PBE Key Derivations  ------------------- */
--    { CKM_PKCS5_PBKD2, { 1, 256, CKF_GEN }, 1, SFTKFIPSNone },
-+    { CKM_PKCS5_PBKD2, { 112, 256, CKF_GEN }, 1, SFTKFIPSNone },
-     { CKM_NSS_PKCS12_PBE_SHA224_HMAC_KEY_GEN, { 224, 224, CKF_GEN }, 1, SFTKFIPSNone },
-     { CKM_NSS_PKCS12_PBE_SHA256_HMAC_KEY_GEN, { 256, 256, CKF_GEN }, 1, SFTKFIPSNone },
-     { CKM_NSS_PKCS12_PBE_SHA384_HMAC_KEY_GEN, { 384, 384, CKF_GEN }, 1, SFTKFIPSNone },
-     { CKM_NSS_PKCS12_PBE_SHA512_HMAC_KEY_GEN, { 512, 512, CKF_GEN }, 1, SFTKFIPSNone }
- };
- const int SFTK_NUMBER_FIPS_ALGORITHMS = PR_ARRAY_SIZE(sftk_fips_mechs);
 diff --git a/lib/softoken/lowpbe.c b/lib/softoken/lowpbe.c
 --- a/lib/softoken/lowpbe.c
 +++ b/lib/softoken/lowpbe.c
-@@ -1765,27 +1765,29 @@ SECStatus
- sftk_fips_pbkdf_PowerUpSelfTests(void)
- {
-     SECItem *result;
-     SECItem inKey;
-     NSSPKCS5PBEParameter pbe_params;
+@@ -1766,16 +1766,20 @@ sftk_fips_pbkdf_PowerUpSelfTests(void)
      unsigned char iteration_count = 5;
      unsigned char keyLen = 64;
      char *inKeyData = TEST_KEY;
--    static const unsigned char saltData[] =
--        { 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07 };
+-    static const unsigned char saltData[] = { 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07 };
 +    static const unsigned char saltData[] = {
 +        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
 +        0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f
 +    };
++
      static const unsigned char pbkdf_known_answer[] = {
 -        0x31, 0xf0, 0xe5, 0x39, 0x9f, 0x39, 0xb9, 0x29,
 -        0x68, 0xac, 0xf2, 0xe9, 0x53, 0x9b, 0xb4, 0x9c,
@@ -350,13 +191,8 @@ diff --git a/lib/softoken/lowpbe.c b/lib/softoken/lowpbe.c
 +        0x17, 0x97, 0x73, 0x75, 0x7b, 0x88, 0x49, 0xd8,
 +        0x6f, 0x78, 0x5a, 0xde, 0x50, 0x20, 0x55, 0x33
      };
- 
+
      sftk_PBELockInit();
- 
-     inKey.data = (unsigned char *)inKeyData;
-     inKey.len = sizeof(TEST_KEY) - 1;
- 
-     pbe_params.salt.data = (unsigned char *)saltData;
 diff --git a/lib/softoken/pkcs11c.c b/lib/softoken/pkcs11c.c
 --- a/lib/softoken/pkcs11c.c
 +++ b/lib/softoken/pkcs11c.c
